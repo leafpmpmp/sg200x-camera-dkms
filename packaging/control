@@ -1,0 +1,12 @@
+Package: sg200x-camera-dkms
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: @MAINTAINER@
+Depends: dkms
+Section: kernel
+Priority: optional
+Description: camera drivers for Sophgo SG200x boards (DKMS)
+ Out-of-tree V4L2 drivers for the SG200x video input (raw capture) and MIPI
+ CSI-2 receiver, the Sony IMX708 sensor and the DW9817 focus driver of the
+ Raspberry Pi Camera Module 3, with a device tree overlay for the Milk-V
+ Duo S J2 connector. Nothing is enabled until the overlay is.

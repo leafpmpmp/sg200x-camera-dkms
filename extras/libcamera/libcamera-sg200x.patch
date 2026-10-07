@@ -1,0 +1,65 @@
+diff --git a/src/ipa/simple/data/imx708.yaml b/src/ipa/simple/data/imx708.yaml
+new file mode 100644
+index 0000000..40b766b
+--- /dev/null
++++ b/src/ipa/simple/data/imx708.yaml
+@@ -0,0 +1,35 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++# Sony IMX708 (Raspberry Pi Camera Module 3). The black level and colour
++# correction matrices come from the Raspberry Pi tuning (rpi/pisp/imx708.json).
++version: 1
++algorithms:
++  - BlackLevel:
++      blackLevel: 4096
++  - Awb:
++  - Ccm:
++      ccms:
++        - ct: 2964
++          ccm: [ 1.72129, -0.45961, -0.26169,
++                -0.30042,  1.56924, -0.26882,
++                 0.15133, -1.13293,  1.98161 ]
++        - ct: 3610
++          ccm: [ 1.54474, -0.35082, -0.19391,
++                -0.36989,  1.67926, -0.30936,
++                -0.00524, -0.55197,  1.55722 ]
++        - ct: 4640
++          ccm: [ 1.52972, -0.35168, -0.17804,
++                -0.28309,  1.67098, -0.38788,
++                 0.01695, -0.57209,  1.55515 ]
++        - ct: 5910
++          ccm: [ 1.56879, -0.42159, -0.14719,
++                -0.27275,  1.59354, -0.32079,
++                -0.02862, -0.40662,  1.43525 ]
++        - ct: 7590
++          ccm: [ 1.41424, -0.21092, -0.20332,
++                -0.17646,  1.71734, -0.54087,
++                 0.01297, -0.63111,  1.61814 ]
++  - Adjust:
++  - Agc:
++...
+diff --git a/src/ipa/simple/data/meson.build b/src/ipa/simple/data/meson.build
+index 92795ee..011de07 100644
+--- a/src/ipa/simple/data/meson.build
++++ b/src/ipa/simple/data/meson.build
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: CC0-1.0
+ 
+ conf_files = files([
++    'imx708.yaml',
+     'uncalibrated.yaml',
+ ])
+ 
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index e26f438..cda20e9 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -256,6 +256,7 @@ struct SimplePipelineInfo {
+ namespace {
+ 
+ static const SimplePipelineInfo supportedDevices[] = {
++	{ "cv1800-vi", {}, true },
+ 	{ "dcmipp", {}, false },
+ 	{ "imx7-csi", { { "pxp", 1 } }, true },
+ 	{ "intel-ipu6", {}, true },

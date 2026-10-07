@@ -1,0 +1,36 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: sg200x-camera-dkms
+
+Files: *
+Copyright: 2026 Shou-po Tsai <leafpmpmp@gmail.com>
+License: GPL-2.0
+
+Files: src/imx708.c
+Copyright: 2022-2026 Raspberry Pi Ltd
+           2026 Ideas on Board Oy
+License: GPL-2.0
+
+Files: src/dw9817-vcm.c
+Copyright: 2018 Intel Corporation
+License: GPL-2.0
+
+Files: src/linux/ccs-pll.c src/linux/ccs-pll.h
+Copyright: 2020 Intel Corporation
+           2011-2012 Nokia Corporation
+License: GPL-2.0
+
+Files: src/linux/ccs/ccs-regs.h
+Copyright: 2019-2020 Intel Corporation
+License: GPL-2.0 or BSD-3-Clause
+
+Files: src/linux/v4l2-cci.c
+Copyright: 2023 Hans de Goede
+License: GPL-2.0
+
+Files: dts/*
+Copyright: 2026 Shou-po Tsai <leafpmpmp@gmail.com>
+License: GPL-2.0 or MIT
+
+License: GPL-2.0
+ On Debian systems, the full text of the GNU General Public License version 2
+ can be found in /usr/share/common-licenses/GPL-2.

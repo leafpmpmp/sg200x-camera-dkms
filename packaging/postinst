@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+NAME=sg200x-camera
+VERSION=@VERSION@
+
+if [ "$1" = configure ]; then
+	# /boot is FAT on Armbian, where dpkg cannot replace files itself
+	mkdir -p /boot/overlay-user
+	cp /usr/lib/sg200x-camera/*.dtbo /boot/overlay-user/
+	dkms status -m $NAME -v $VERSION | grep -q . || dkms add -m $NAME -v $VERSION
+	# Kernels installed later are built by DKMS's own kernel hook
+	for k in /lib/modules/*; do
+		k=${k##*/}
+		[ -e /lib/modules/$k/build ] || continue
+		dkms install -m $NAME -v $VERSION -k $k ||
+			echo "$NAME: building for $k failed, see /var/lib/dkms/$NAME/$VERSION/build/make.log" >&2
+	done
+	[ -e /lib/modules/$(uname -r)/build ] ||
+		echo "$NAME: install the linux-headers package of the running kernel to build the modules" >&2
+fi
+exit 0

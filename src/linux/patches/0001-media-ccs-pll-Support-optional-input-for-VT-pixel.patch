@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+X-Patchwork-Submitter: Jai Luthra <jai.luthra@ideasonboard.com>
+X-Patchwork-Id: 155206
+Received: from tor.lore.kernel.org ([172.105.105.114])
+	by linuxtv.org with esmtps  (TLS1.3) tls
+ TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+	(Exim 4.96)
+	(envelope-from
+ <linux-media+bounces-70375-patchwork=linuxtv.org@vger.kernel.org>)
+	id 1wsK7x-0006nt-01
+	for patchwork@linuxtv.org;
+	Fri, 07 Aug 2026 12:56:45 +0000
+Received: from smtp.subspace.kernel.org (conduit.subspace.kernel.org
+ [100.90.174.1])
+	by tor.lore.kernel.org (Postfix) with ESMTP id 8EC063011A5C
+	for <patchwork@linuxtv.org>; Fri,  7 Aug 2026 12:56:39 +0000 (UTC)
+Received: from localhost.localdomain (localhost.localdomain [127.0.0.1])
+	by smtp.subspace.kernel.org (Postfix) with ESMTP id 56DD747885C;
+	Fri,  7 Aug 2026 12:56:36 +0000 (UTC)
+Authentication-Results: smtp.subspace.kernel.org;
+	dkim=pass (1024-bit key) header.d=ideasonboard.com header.i=@ideasonboard.com
+ header.b="KNp6cks+"
+X-Original-To: linux-media@vger.kernel.org
+Received: from perceval.ideasonboard.com (perceval.ideasonboard.com
+ [213.167.242.64])
+	(using TLSv1.2 with cipher ECDHE-RSA-AES256-GCM-SHA384 (256/256 bits))
+	(No client certificate requested)
+	by smtp.subspace.kernel.org (Postfix) with ESMTPS id 265D532B112;
+	Fri,  7 Aug 2026 12:56:19 +0000 (UTC)
+Authentication-Results: smtp.subspace.kernel.org;
+ arc=none smtp.client-ip=213.167.242.64
+ARC-Seal: i=1; a=rsa-sha256; d=subspace.kernel.org; s=arc-20240116;
+	t=1786107392; cv=none;
+ b=ly19kAtQ9S5rO9OKFNSCGWA60eWSvdCJew11eNv8TNEMNFw8dzEZ66M66Vg6jMav4GJlLE2TSz5fa9ZyoXNuKu2rSXBtYbdF9vQrij7+eeO4bC94He47KsNDndPNn8b1thvJ9CDuXCrtINi9HraMcCbd5c54cCtR7KRL2CEG5EE=
+ARC-Message-Signature: i=1; a=rsa-sha256; d=subspace.kernel.org;
+	s=arc-20240116; t=1786107392; c=relaxed/simple;
+	bh=Ie3VxD5isjLSW8L48mz6OxmWd8JKx9mwDt6hx9HrtXY=;
+	h=From:Date:Subject:MIME-Version:Content-Type:Message-Id:References:
+	 In-Reply-To:To:Cc;
+ b=PR3rZs/f+ltKiup8ns0uV9TmlNjfNlM0+Vs6o7YNBJ/XX7Mr8AF2Ah9KwAElMZnvE6MRehDBIvjOMCXVh2OCaQsOE1MErGha0ARLzj0lBw03CxlxQmt6t0eeGZvwmUuwqES2ZPy8VDAlIm73Go6MSlVUMT+sfIcEbcOAtzUk8Xk=
+ARC-Authentication-Results: i=1; smtp.subspace.kernel.org;
+ dmarc=pass (p=none dis=none) header.from=ideasonboard.com;
+ spf=pass smtp.mailfrom=ideasonboard.com;
+ dkim=pass (1024-bit key) header.d=ideasonboard.com header.i=@ideasonboard.com
+ header.b=KNp6cks+; arc=none smtp.client-ip=213.167.242.64
+Authentication-Results: smtp.subspace.kernel.org;
+ dmarc=pass (p=none dis=none) header.from=ideasonboard.com
+Authentication-Results: smtp.subspace.kernel.org;
+ spf=pass smtp.mailfrom=ideasonboard.com
+Received: from mail.ideasonboard.com (unknown
+ [IPv6:2401:4900:1c67:4f4:b619:ec54:a907:a006])
+	by perceval.ideasonboard.com (Postfix) with ESMTPSA id 568E3741;
+	Fri,  7 Aug 2026 14:55:05 +0200 (CEST)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple; d=ideasonboard.com;
+	s=mail; t=1786107305;
+	bh=Ie3VxD5isjLSW8L48mz6OxmWd8JKx9mwDt6hx9HrtXY=;
+	h=From:Date:Subject:References:In-Reply-To:To:Cc:From;
+	b=KNp6cks+Esk9R+GoFFA69xSiVMzOtBjF1v3osOgGdaAsagdZs0gf3+WBcyUXkkmVi
+	 1/w0/DdsQn6zemrfYw5Ol/SbdzcNzLECGrJ0LjJLHYHYYj9nYiKOXNjzDPoopT1wjq
+	 0FpTifKELBATp/p3pHoXpa5bJqHSv3cYhhKrDNd4=
+From: Jai Luthra <jai.luthra@ideasonboard.com>
+Date: Fri, 07 Aug 2026 18:25:19 +0530
+Subject: [PATCH v2 2/3] media: ccs-pll: Support optional input for VT pixel
+ rate
+Precedence: bulk
+X-Mailing-List: linux-media@vger.kernel.org
+List-Id: <linux-media.vger.kernel.org>
+List-Subscribe: <mailto:linux-media+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-media+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Message-Id: <20260807-imx708-v2-2-7d3d7b57779d@ideasonboard.com>
+References: <20260807-imx708-v2-0-7d3d7b57779d@ideasonboard.com>
+In-Reply-To: <20260807-imx708-v2-0-7d3d7b57779d@ideasonboard.com>
+To: Mauro Carvalho Chehab <mchehab@kernel.org>,
+ Rob Herring <robh@kernel.org>, Krzysztof Kozlowski <krzk+dt@kernel.org>,
+ Conor Dooley <conor+dt@kernel.org>,
+ Sakari Ailus <sakari.ailus@linux.intel.com>
+Cc: Dave Stevenson <dave.stevenson@raspberrypi.com>,
+ Naushir Patuck <naush@raspberrypi.com>,
+ David Plowman <david.plowman@raspberrypi.com>,
+ Kieran Bingham <kieran.bingham@ideasonboard.com>,
+ Laurent Pinchart <laurent.pinchart@ideasonboard.com>,
+ linux-media@vger.kernel.org, devicetree@vger.kernel.org,
+ Raspberry Pi Kernel Maintenance <kernel-list@raspberrypi.com>,
+ Jai Luthra <jai.luthra@ideasonboard.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=openpgp-sha256; l=2391;
+ i=jai.luthra@ideasonboard.com; h=from:subject:message-id;
+ bh=Ie3VxD5isjLSW8L48mz6OxmWd8JKx9mwDt6hx9HrtXY=;
+ b=owEBbQKS/ZANAwAKAUPekfkkmnFFAcsmYgBqddXe6zsU+da09t1Prl8i/XZjSWmbkWeoU7XbI
+ ypXbGsOEa+JAjMEAAEKAB0WIQRN4NgY5dV16NRar8VD3pH5JJpxRQUCanXV3gAKCRBD3pH5JJpx
+ RdyeD/49fUmERut/BwmnsFV0p+6ZdblNqQ6VXwsax2STUoo1gxbNPlnww+fQcQDyjvLORaihPYa
+ hZt5B/dVqKh0EsW0MeKhJ8sL7I17lQ9/Y7rqSdgVUgclCbcRlGzD5sZvJVcNGGlL/jPRcM8W/Lk
+ BMKirKxs7xVSW59zK8IG34jQ/Qo6A3Unzgp8VDElf585upBZ6xWoHXzu2uvILNxZx3GFuzKztyW
+ OBnbhnrMn9Xx6HlzX/mgo2dg+9PBwyYxEP1Hh3P4s6Odj4xK99hWlG0fdSqw2gRfhJlnhzoTTUF
+ samZeM7aSgnPWRq55anugjjCKi3c0sy5F3sVEHoNAxJEbzyawPPnDyOy3buVFIeAOyh4LXEkGHG
+ vG6KmcNV9Hvca2BaLvp+dq4paAoXCgeYwNAdf4GMis3iTzPrThs+dvpwP/2VBUNpTNvbP2Fmrfl
+ ikZf9ttGfaMREd+Xu1ChCzFpp4en11dMtOl10igYyElM0D6pWBChJw2e7OgYWjqCmfza64xUQ1u
+ AL3HzUjj+J3RxdybeiWEnppeE27Py/SrFZMjuzR1jT3isiycfxq3gEPLRmML9XlvpMy9p0Cyo5i
+ +4RJl+4LtJSGyu04t1WzNoq03rbhmsax3ZRthwLOyiZShjFcC6patfC7RToiQvkeJhZqVHeHWkA
+ icncglh1+ki6XRQ==
+X-Developer-Key: i=jai.luthra@ideasonboard.com; a=openpgp;
+ fpr=4DE0D818E5D575E8D45AAFC543DE91F9249A7145
+X-LSpam-Score: -6.3 (------)
+X-LSpam-Report: No,
+ score=-6.3 required=5.0
+ tests=ARC_SIGNED=0.001,ARC_VALID=-0.1,BAYES_00=-1.9,DKIM_SIGNED=0.1,DKIM_VALID=-0.1,DKIM_VALID_AU=-0.1,DMARC_PASS=-0.001,HEADER_FROM_DIFFERENT_DOMAINS=0.5,MAILING_LIST_MULTI=-1,RCVD_IN_VALIDITY_CERTIFIED=-3,RCVD_IN_VALIDITY_RPBL=1.31,RCVD_IN_VALIDITY_SAFE=-2,SPF_HELO_NONE=0.001,SPF_PASS=-0.001
+ autolearn=ham autolearn_force=no
+
+When the PLL is configured in DUAL_MODE (separate VT and OP trees) and
+the sensor's FIFOs allow derating and/or overrating, the VT pixel rate
+might be higher or lower than OP pixel rate.
+
+Support such usecases by allowing an optional input for the target VT
+pixel rate.
+
+Signed-off-by: Jai Luthra <jai.luthra@ideasonboard.com>
+---
+ drivers/media/i2c/ccs-pll.c | 13 +++++++++++--
+ drivers/media/i2c/ccs-pll.h |  4 +++-
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/ccs-pll.c b/drivers/media/i2c/ccs-pll.c
+index 1605cfa5db19..9aa164994cc7 100644
+--- a/drivers/media/i2c/ccs-pll.c
++++ b/drivers/media/i2c/ccs-pll.c
+@@ -388,6 +388,14 @@ __ccs_pll_calculate_vt_tree(struct device *dev,
+ 	return 0;
+ }
+ 
++static inline u32 ccs_pll_vt_pixel_rate(const struct ccs_pll *pll)
++{
++	if (pll->pixel_rate_pixel_array)
++		return pll->pixel_rate_pixel_array;
++
++	return pll->pixel_rate_csi;
++}
++
+ static int ccs_pll_calculate_vt_tree(struct device *dev,
+ 				     const struct ccs_pll_limits *lim,
+ 				     struct ccs_pll *pll)
+@@ -396,11 +404,12 @@ static int ccs_pll_calculate_vt_tree(struct device *dev,
+ 	struct ccs_pll_branch_fr *pll_fr = &pll->vt_fr;
+ 	u16 min_pre_pll_clk_div = lim_fr->min_pre_pll_clk_div;
+ 	u16 max_pre_pll_clk_div = lim_fr->max_pre_pll_clk_div;
++	u32 vt_pixel_rate = ccs_pll_vt_pixel_rate(pll);
+ 	u32 pre_mul, pre_div;
+ 
+-	pre_div = gcd(pll->pixel_rate_csi,
++	pre_div = gcd(vt_pixel_rate,
+ 		      pll->ext_clk_freq_hz * pll->vt_lanes);
+-	pre_mul = pll->pixel_rate_csi / pre_div;
++	pre_mul = vt_pixel_rate / pre_div;
+ 	pre_div = pll->ext_clk_freq_hz * pll->vt_lanes / pre_div;
+ 
+ 	/* Make sure PLL input frequency is within limits */
+diff --git a/drivers/media/i2c/ccs-pll.h b/drivers/media/i2c/ccs-pll.h
+index e22903931e72..5c00a72c41df 100644
+--- a/drivers/media/i2c/ccs-pll.h
++++ b/drivers/media/i2c/ccs-pll.h
+@@ -114,7 +114,9 @@ struct ccs_pll_branch_bk {
+  * @op_bk: Operational timing back-end configuration (output)
+  * @pixel_rate_csi: Pixel rate on the output data bus (output)
+  * @pixel_rate_pixel_array: Nominal pixel rate in the sensor's pixel array
+- *			    (output)
++ *			    (input/output). It is a valid input only when
++ *			    FLAG_DUAL_PLL is set, serving as a target rate
++ *			    for the VT tree.
+  */
+ struct ccs_pll {
+ 	/* input values */
+
