@@ -568,6 +568,10 @@ static int imx708_set_ctrl(struct v4l2_ctrl *ctrl)
 		cci_write(imx708->cci, CCS_R_ABSOLUTE_GAIN_RED,
 			  ctrl->p_new.p_u32[3], &ret);
 		break;
+	case V4L2_CID_PIXEL_RATE:
+	case V4L2_CID_HBLANK:
+		/* Read only: a mode change updates them */
+		break;
 	default:
 		dev_warn(&client->dev,
 			 "ctrl(id:0x%x,val:0x%x) is not handled\n",
@@ -928,7 +932,8 @@ static int imx708_disable_streams(struct v4l2_subdev *sd,
 	__v4l2_ctrl_grab(imx708->vflip, false);
 	__v4l2_ctrl_grab(imx708->hflip, false);
 
-	pm_runtime_put_autosuspend(&client->dev);
+	/* Power off now: a start before an async suspend runs would cancel it */
+	pm_runtime_put_sync_autosuspend(&client->dev);
 
 	return ret;
 }
@@ -1424,7 +1429,8 @@ static int imx708_probe(struct i2c_client *client)
 	 * Restarting from software standby stalls the sensor: mode select
 	 * reads back as streaming but the frame counter stops, whether or not
 	 * the PLL is reprogrammed. Power it off as soon as it stops streaming,
-	 * so that every start is a cold start, as on the Raspberry Pi kernel.
+	 * so that every start programs it from scratch, as on the Raspberry Pi
+	 * kernel.
 	 */
 	pm_runtime_set_autosuspend_delay(dev, 0);
 	pm_runtime_use_autosuspend(dev);

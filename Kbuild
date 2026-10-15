@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-obj-m := cv1800-vi.o cv1800-csi2.o dw9817-vcm.o imx708.o
+obj-m := cv1800-vi.o cv1800-csi2.o dw9817-vcm.o imx708.o ov5647.o
 
 cv1800-vi-y := src/cv1800-vi.o
 cv1800-csi2-y := src/cv1800-csi2.o
@@ -12,3 +12,9 @@ dw9817-vcm-y := src/dw9817-vcm.o
 imx708-y := src/imx708.o src/linux/ccs-pll.o src/linux/v4l2-cci.o
 CFLAGS_src/imx708.o := -I$(src)/src/linux -DCONFIG_V4L2_CCI_I2C_MODULE=1
 CFLAGS_src/linux/v4l2-cci.o := -DCONFIG_V4L2_CCI_I2C_MODULE=1
+
+# Mainline's OV5647 driver (Raspberry Pi Camera Module v1), which Armbian
+# kernels do not build, with its own copy of the CCI helpers.
+ov5647-y := src/linux/ov5647.o src/ov5647-cci.o
+CFLAGS_src/linux/ov5647.o := -DCONFIG_V4L2_CCI_I2C_MODULE=1
+CFLAGS_src/ov5647-cci.o := -DCONFIG_V4L2_CCI_I2C_MODULE=1

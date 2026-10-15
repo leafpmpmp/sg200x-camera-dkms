@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Private copy from Linux 7.2.9 for the imx708 module: nothing exported */
+/* Private copy from Linux 7.2.9 for the camera modules: nothing exported */
 /*
  * MIPI Camera Control Interface (CCI) register access helpers.
  *

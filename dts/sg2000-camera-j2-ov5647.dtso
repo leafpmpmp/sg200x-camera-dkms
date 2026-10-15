@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/*
+ * Raspberry Pi Camera Module v1 (OmniVision OV5647) on the Milk-V Duo S J2
+ * connector. Sensor at 0x36, clocked by the module's 25 MHz oscillator.
+ */
+/dts-v1/;
+/plugin/;
+
+#define J2_CAM_CLOCK_HZ 25000000
+#include "sg2000-j2-camera.dtsi"
+
+&i2c2 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	ov5647: camera@36 {
+		compatible = "ovti,ov5647";
+		reg = <0x36>;
+		clocks = <&cam1_clk>;
+		avdd-supply = <&cam1_reg>;
+		dovdd-supply = <&cam1_reg>;
+		dvdd-supply = <&cam1_reg>;
+		orientation = <2>;
+
+		port {
+			sensor_out: endpoint {
+				remote-endpoint = <&csi2_in>;
+				data-lanes = <1 2>;
+			};
+		};
+	};
+};

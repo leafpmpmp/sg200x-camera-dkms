@@ -33,12 +33,14 @@ cp "$TOP/dkms.conf" "$TOP/Kbuild" "$TOP/Makefile" "$SRC/"
 cp -r "$TOP/src" "$SRC/"
 rm -rf "$SRC/src/linux/patches"
 
-# The overlay, for this architecture's interrupt controller. The postinst
-# copies it into /boot, which dpkg cannot manage on Armbian's FAT partition.
-cpp -nostdinc -undef -D__DTS__ $DTSDEF -x assembler-with-cpp \
-	-I "$KSRC/include" -I "$KSRC/arch/riscv/boot/dts/sophgo" -I "$TOP/dts" \
-	"$TOP/dts/sg2000-camera-j2-imx708.dtso" |
-	dtc -@ -q -I dts -O dtb -o "$ROOT/usr/lib/sg200x-camera/sg2000-camera-j2-imx708.dtbo" -
+# The overlays, for this architecture's interrupt controller. The postinst
+# copies them into /boot, which dpkg cannot manage on Armbian's FAT partition.
+for dtso in "$TOP"/dts/*.dtso; do
+	name=$(basename "$dtso" .dtso)
+	cpp -nostdinc -undef -D__DTS__ $DTSDEF -x assembler-with-cpp \
+		-I "$KSRC/include" -I "$KSRC/arch/riscv/boot/dts/sophgo" -I "$TOP/dts" "$dtso" |
+		dtc -@ -q -I dts -O dtb -o "$ROOT/usr/lib/sg200x-camera/$name.dtbo" -
+done
 
 cp "$TOP/README.md" "$TOP/packaging/copyright" "$DOC/"
 for s in postinst prerm postrm; do

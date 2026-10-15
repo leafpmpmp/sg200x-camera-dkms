@@ -10,8 +10,10 @@
 #ifdef SG2000_ARM64
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #define SOC_PERIPHERAL_IRQ(nr)	GIC_SPI (nr)
+#define SOC_INTC		&gic
 #else
 #define SOC_PERIPHERAL_IRQ(nr)	((nr) + 16)
+#define SOC_INTC		&plic
 #endif
 
 #endif

@@ -2,7 +2,7 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: sg200x-camera-dkms
 
 Files: *
-Copyright: 2026 Shou-po Tsai <leafpmpmp@gmail.com>
+Copyright: 2026 morikon <leafpmpmp@gmail.com>
 License: GPL-2.0
 
 Files: src/imx708.c
@@ -23,12 +23,18 @@ Files: src/linux/ccs/ccs-regs.h
 Copyright: 2019-2020 Intel Corporation
 License: GPL-2.0 or BSD-3-Clause
 
-Files: src/linux/v4l2-cci.c
+Files: src/linux/ov5647.c
+Copyright: 2016 Synopsys, Inc.
+           2011 Sylwester Nawrocki
+           2006-2007 Jonathan Corbet
+License: GPL-2.0
+
+Files: src/linux/v4l2-cci.c src/ov5647-cci.c
 Copyright: 2023 Hans de Goede
 License: GPL-2.0
 
 Files: dts/*
-Copyright: 2026 Shou-po Tsai <leafpmpmp@gmail.com>
+Copyright: 2026 morikon <leafpmpmp@gmail.com>
 License: GPL-2.0 or MIT
 
 License: GPL-2.0

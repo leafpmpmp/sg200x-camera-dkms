@@ -11,7 +11,7 @@
  * wiring is described with clock-lanes and data-lanes in the endpoint
  * (Milk-V Duo S J2: clock-lanes = <5>, data-lanes = <3 4>).
  *
- * Copyright (C) 2026 Shou Po Tsai <leafpmpmp@gmail.com>
+ * Copyright (C) 2026 morikon <leafpmpmp@gmail.com>
  */
 
 #include <linux/bitfield.h>
@@ -146,9 +146,19 @@
 #define DESKEW_CLK			0x00
 #define DESKEW_DATA			0x03
 
-static unsigned int hs_settle = 16;
+/*
+ * The HS settle counter runs on the lane byte clock, a quarter of the link
+ * frequency. 142 ns sits inside the D-PHY settle window (85 ns + 6 UI to
+ * 145 ns + 10 UI) from about 300 Mbps to 2 Gbps per lane. Some sensors time
+ * the HS entry in UI, so never go below 8 byte clocks. Measured: 16 works at
+ * 900 Mbps (IMX708); 5 to 11 at 437.5 Mbps and 6 to 11 at 291.6 Mbps (OV5647).
+ */
+#define CV1800_CSI2_SETTLE_NS		142
+#define CV1800_CSI2_SETTLE_MIN		8
+
+static unsigned int hs_settle;
 module_param(hs_settle, uint, 0644);
-MODULE_PARM_DESC(hs_settle, "D-PHY HS settle count (vendor default 16)");
+MODULE_PARM_DESC(hs_settle, "D-PHY HS settle count; 0 derives it from the link frequency");
 
 static unsigned int mac_mhz = 400;
 module_param(mac_mhz, uint, 0644);
@@ -191,6 +201,7 @@ struct cv1800_csi2 {
 	unsigned int clock_lane;
 	unsigned int data_lanes[CV1800_CSI2_MAX_DATA_LANES];
 	unsigned int num_lanes;
+	unsigned int settle;		/* HS settle count of this stream */
 	bool pnswap[1 + CV1800_CSI2_MAX_DATA_LANES];	/* clock, then data */
 
 	bool debug_on;			/* receiver powered from debugfs */
@@ -246,7 +257,8 @@ static void cv1800_csi2_mac_clock(struct cv1800_csi2 *csi2)
 	regmap_update_bits(csi2->vip_sys, VIP_SYS_DIV_CSI_MAC0,
 			   VIP_DIV_RATIO | VIP_DIV_EN,
 			   FIELD_PREP(VIP_DIV_RATIO, ratio) | VIP_DIV_EN);
-	regmap_set_bits(csi2->vip_sys, VIP_SYS_DIV_CSI_MAC0, VIP_DIV_UPDATE);
+	regmap_write_bits(csi2->vip_sys, VIP_SYS_DIV_CSI_MAC0, VIP_DIV_UPDATE,
+			  VIP_DIV_UPDATE);
 	udelay(5);
 
 	dev_dbg(csi2->dev, "MAC clock %lu Hz\n", src / 32 * (ratio + 1));
@@ -260,14 +272,14 @@ static void cv1800_csi2_mac_clock(struct cv1800_csi2 *csi2)
 static void cv1800_csi2_pad_bias(struct cv1800_csi2 *csi2)
 {
 	unsigned int i, lane;
-	u32 used = BIT(csi2->clock_lane);
+	unsigned long used = BIT(csi2->clock_lane);
 
 	if (!csi2->pad)
 		return;
 
 	for (i = 0; i < csi2->num_lanes; i++)
 		used |= BIT(csi2->data_lanes[i]);
-	for_each_set_bit(lane, (unsigned long *)&used, CV1800_CSI2_PHY_LANES) {
+	for_each_set_bit(lane, &used, CV1800_CSI2_PHY_LANES) {
 		void __iomem *n = csi2->pad + PAD_CONF(lane);
 
 		writel(readl(n) & ~(PAD_PULL_UP | PAD_PULL_DOWN), n);
@@ -363,7 +375,7 @@ static void cv1800_csi2_phy_config(struct cv1800_csi2 *csi2)
 
 	phy_update(csi2, PHY_4L_TIMING,
 		   PHY_4L_T_HS_SETTLE | PHY_4L_AUTO_IGNORE | PHY_4L_AUTO_SYNC,
-		   FIELD_PREP(PHY_4L_T_HS_SETTLE, hs_settle));
+		   FIELD_PREP(PHY_4L_T_HS_SETTLE, csi2->settle));
 	phy_update(csi2, PHY_4L_MODE, PHY_4L_SENSOR_MODE, 0);
 }
 
@@ -440,12 +452,52 @@ static void cv1800_csi2_stop(struct cv1800_csi2 *csi2)
 	mac_update(csi2, MAC_MODE, MAC_CSI_CTRL_ENABLE, 0);
 	dev_dbg(csi2->dev, "errors: ecc %u crc %u hdr %u wc %u fifo %u\n",
 		csi2->ecc, csi2->crc, csi2->hdr, csi2->wc, csi2->fifo_full);
-	pm_runtime_put(csi2->dev);
+	pm_runtime_put_sync(csi2->dev);
 }
 
 /* -----------------------------------------------------------------------------
  * Subdevice
  */
+
+/* Bits per pixel of a code in cv1800_csi2_codes[]: four each of 8, 10, 12 */
+static unsigned int cv1800_csi2_bpp(u32 code)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(cv1800_csi2_codes); i++)
+		if (cv1800_csi2_codes[i] == code)
+			return 8 + 2 * (i / 4);
+
+	return 0;
+}
+
+static int cv1800_csi2_set_settle(struct cv1800_csi2 *csi2,
+				  struct v4l2_subdev_state *state)
+{
+	unsigned int forced = READ_ONCE(hs_settle);
+	const struct v4l2_mbus_framefmt *fmt;
+	s64 freq;
+
+	if (forced) {
+		csi2->settle = min(forced, 255U);
+		return 0;
+	}
+
+	fmt = v4l2_subdev_state_get_format(state, CV1800_CSI2_PAD_SINK);
+	freq = v4l2_get_link_freq(&csi2->source->entity.pads[csi2->source_pad],
+				  cv1800_csi2_bpp(fmt->code), 2 * csi2->num_lanes);
+	if (freq < 0) {
+		dev_err(csi2->dev, "no link frequency from the sensor: %lld\n", freq);
+		return freq;
+	}
+
+	csi2->settle = clamp_t(u64, DIV_ROUND_CLOSEST_ULL((u64)freq * CV1800_CSI2_SETTLE_NS / 4,
+							  NSEC_PER_SEC),
+			       CV1800_CSI2_SETTLE_MIN, 255);
+	dev_dbg(csi2->dev, "link %lld Hz, HS settle %u\n", freq, csi2->settle);
+
+	return 0;
+}
 
 static bool cv1800_csi2_code_ok(u32 code)
 {
@@ -530,6 +582,13 @@ static int cv1800_csi2_enable_streams(struct v4l2_subdev *sd,
 
 	if (!csi2->source)
 		return -ENOLINK;
+	/* The debugfs power file holds the receiver */
+	if (csi2->debug_on)
+		return -EBUSY;
+
+	ret = cv1800_csi2_set_settle(csi2, state);
+	if (ret)
+		return ret;
 
 	ret = cv1800_csi2_start(csi2);
 	if (ret)
@@ -548,7 +607,9 @@ static int cv1800_csi2_disable_streams(struct v4l2_subdev *sd,
 {
 	struct cv1800_csi2 *csi2 = sd_to_csi2(sd);
 
-	v4l2_subdev_disable_streams(csi2->source, csi2->source_pad, BIT_ULL(0));
+	/* The sensor may have been unbound while streaming */
+	if (csi2->source)
+		v4l2_subdev_disable_streams(csi2->source, csi2->source_pad, BIT_ULL(0));
 	cv1800_csi2_stop(csi2);
 
 	return 0;
@@ -649,9 +710,15 @@ static ssize_t cv1800_csi2_power_write(struct file *file, const char __user *ubu
 	state = v4l2_subdev_lock_and_get_active_state(&csi2->sd);
 	if (v4l2_subdev_is_streaming(&csi2->sd))
 		ret = -EBUSY;
-	else if (on && !csi2->debug_on)
-		ret = cv1800_csi2_start(csi2);
-	else if (!on && csi2->debug_on)
+	else if (on && !csi2->debug_on) {
+		/* With no sensor the settle count does not matter: nothing streams */
+		if (csi2->source)
+			ret = cv1800_csi2_set_settle(csi2, state);
+		else
+			csi2->settle = hs_settle ?: 16;
+		if (!ret)
+			ret = cv1800_csi2_start(csi2);
+	} else if (!on && csi2->debug_on)
 		cv1800_csi2_stop(csi2);
 	if (!ret)
 		csi2->debug_on = on;

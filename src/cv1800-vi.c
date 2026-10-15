@@ -15,7 +15,7 @@
  * that start while it is not armed, and the frame-done interrupt hands
  * the next buffer to the DMA and re-arms it.
  *
- * Copyright (C) 2026 Shou Po Tsai <leafpmpmp@gmail.com>
+ * Copyright (C) 2026 morikon <leafpmpmp@gmail.com>
  */
 
 #include <linux/bitfield.h>
@@ -101,6 +101,9 @@
 #define   SW_RST_ALL			0x37f
 #define TOP_BLK_IDLE			(VI_ISPTOP + 0x38)
 #define   BLK_IDLE_FE0			BIT(0)
+#define   BLK_IDLE_WDMA0		BIT(8)
+#define   BLK_IDLE_WDMA1		BIT(9)
+#define   BLK_IDLE_RAW			(BLK_IDLE_FE0 | BLK_IDLE_WDMA0 | BLK_IDLE_WDMA1)
 #define TOP_SVN_VERSION			(VI_ISPTOP + 0x74)
 
 /* Pre-raw front end 0 */
@@ -124,6 +127,7 @@
 #define   BDG_RESET_MODE		BIT(13)
 #define   BDG_VS_MODE			BIT(14)
 #define   BDG_ABORT_MODE		BIT(15)
+#define   BDG_ABORT			BIT(17)
 #define   BDG_CSI_ENABLE		BIT(24)
 #define   BDG_TGEN_ENABLE		BIT(25)
 #define   BDG_CSI_UP_REG		BIT(31)
@@ -164,6 +168,8 @@
 #define   BDG_CH0_WIDTH_LS_INT		BIT(5)
 #define   BDG_CH0_HEIGHT_GT_INT		BIT(6)
 #define   BDG_CH0_HEIGHT_LS_INT		BIT(7)
+#define   BDG_CH0_SIZE_ERR		(BDG_CH0_WIDTH_GT_INT | BDG_CH0_WIDTH_LS_INT | \
+					 BDG_CH0_HEIGHT_GT_INT | BDG_CH0_HEIGHT_LS_INT)
 #define BDG_INT_STATUS_1		(VI_CSIBDG0 + 0xe4)
 #define   BDG_FIFO_OVERFLOW_INT		BIT(0)
 #define   BDG_RES_OVER_MAX_INT		BIT(1)
@@ -302,6 +308,8 @@ struct cv1800_vi {
 	u64 sof_ts;
 	unsigned int errors;
 	unsigned int skip;		/* frames to let pass before arming */
+	struct work_struct recover;	/* resets the bridge after a bad frame */
+	unsigned int recoveries;
 
 	/* Every status bit seen since stream start, for debugfs */
 	u32 ev0_seen, ev2_seen, s0_seen, s1_seen;
@@ -423,7 +431,8 @@ static void cv1800_vi_mac_clock(struct cv1800_vi *vi)
 	regmap_update_bits(vi->vip_sys, VIP_SYS_DIV_CSI_MAC0,
 			   VIP_DIV_RATIO | VIP_DIV_EN,
 			   FIELD_PREP(VIP_DIV_RATIO, CV1800_VI_MAC_RATIO) | VIP_DIV_EN);
-	regmap_set_bits(vi->vip_sys, VIP_SYS_DIV_CSI_MAC0, VIP_DIV_UPDATE);
+	regmap_write_bits(vi->vip_sys, VIP_SYS_DIV_CSI_MAC0, VIP_DIV_UPDATE,
+			  VIP_DIV_UPDATE);
 	udelay(5);
 }
 
@@ -469,8 +478,8 @@ static void cv1800_vi_hw_setup(struct cv1800_vi *vi, unsigned int pattern)
 
 	ctrl = vi_read(vi, BDG_TOP_CTRL);
 	ctrl &= ~(BDG_CSI_MODE | BDG_CSI_IN_FORMAT | BDG_CH_NUM | BDG_PXL_DATA_SEL |
-		  BDG_RESET_MODE | BDG_VS_MODE | BDG_ABORT_MODE | BDG_CSI_ENABLE |
-		  BDG_TGEN_ENABLE | BDG_CSI_UP_REG);
+		  BDG_RESET_MODE | BDG_VS_MODE | BDG_ABORT_MODE | BDG_ABORT |
+		  BDG_CSI_ENABLE | BDG_TGEN_ENABLE | BDG_CSI_UP_REG);
 	ctrl |= BDG_CH0_DMA_WR_ENABLE;
 	if (pattern) {
 		ctrl |= FIELD_PREP(BDG_CSI_MODE, BDG_CSI_MODE_PATGEN) | BDG_PXL_DATA_SEL;
@@ -516,6 +525,13 @@ static void cv1800_vi_hw_setup(struct cv1800_vi *vi, unsigned int pattern)
 }
 
 /* Called with qlock held */
+static void cv1800_vi_arm(struct cv1800_vi *vi)
+{
+	vi_update(vi, FE_FRAME_VLD, FE_PQ_VLD_CH0, FE_PQ_VLD_CH0);
+	vi_update(vi, FE_FRAME_VLD, FE_FRAME_VLD_CH0, FE_FRAME_VLD_CH0);
+}
+
+/* Call with qlock held. While frames are skipped, the VS interrupt arms. */
 static void cv1800_vi_arm_next(struct cv1800_vi *vi)
 {
 	struct cv1800_vi_buffer *buf;
@@ -531,11 +547,11 @@ static void cv1800_vi_arm_next(struct cv1800_vi *vi)
 	vi_write(vi, DMA_BASE_ADDR, lower_32_bits(addr));
 	vi_update(vi, DMA_SYS_CONTROL, DMA_BASEH,
 		  FIELD_PREP(DMA_BASEH, upper_32_bits(addr)));
-	vi_update(vi, FE_FRAME_VLD, FE_PQ_VLD_CH0, FE_PQ_VLD_CH0);
-	vi_update(vi, FE_FRAME_VLD, FE_FRAME_VLD_CH0, FE_FRAME_VLD_CH0);
+	if (!vi->skip)
+		cv1800_vi_arm(vi);
 }
 
-static void cv1800_vi_hw_start(struct cv1800_vi *vi, bool pattern)
+static void cv1800_vi_hw_enable(struct cv1800_vi *vi, bool pattern)
 {
 	u32 en = BDG_CSI_UP_REG | BDG_CSI_ENABLE;
 
@@ -545,23 +561,31 @@ static void cv1800_vi_hw_start(struct cv1800_vi *vi, bool pattern)
 	vi_write(vi, TOP_SW_CTRL_1, FIELD_PREP(SW1_PQ_UP_FE0, 1));
 	vi_write(vi, TOP_SW_CTRL_0, FIELD_PREP(SW0_SHAW_UP_FE0, 1));
 	vi->last_vs = FIELD_GET(BDG_CH0_VS_CNT, vi_read(vi, BDG_CH0_DEBUG_2));
+	vi_update(vi, BDG_TOP_CTRL, en, en);
+}
+
+static void cv1800_vi_hw_start(struct cv1800_vi *vi, bool pattern)
+{
 	vi->frames = 0;
+	vi->recoveries = 0;
 	vi->ev0_seen = vi->ev2_seen = vi->s0_seen = vi->s1_seen = 0;
 	vi->irq_log = irq_log;
-	vi_update(vi, BDG_TOP_CTRL, en, en);
+	cv1800_vi_hw_enable(vi, pattern);
 }
 
 static void cv1800_vi_hw_stop(struct cv1800_vi *vi)
 {
 	u32 idle;
 
-	vi_update(vi, BDG_TOP_CTRL, BDG_CSI_ENABLE | BDG_TGEN_ENABLE, 0);
+	/*
+	 * Disarm the front end while the source still runs: after a frame
+	 * cut short, the front end never goes idle.
+	 */
 	vi_update(vi, FE_FRAME_VLD, FE_FRAME_VLD_CH0 | FE_PQ_VLD_CH0, 0);
-
-	/* Let a frame in flight drain, then make sure nothing is left */
-	if (readl_poll_timeout(vi->base + TOP_BLK_IDLE, idle, idle & BLK_IDLE_FE0,
-			       1000, 200000))
+	if (readl_poll_timeout(vi->base + TOP_BLK_IDLE, idle,
+			       (idle & BLK_IDLE_RAW) == BLK_IDLE_RAW, 10, 200000))
 		dev_warn(vi->dev, "front end did not go idle\n");
+	vi_update(vi, BDG_TOP_CTRL, BDG_CSI_ENABLE | BDG_TGEN_ENABLE, 0);
 
 	vi_write(vi, TOP_INT_EVENT0_EN, 0);
 	vi_write(vi, TOP_INT_EVENT1_EN, 0);
@@ -573,6 +597,7 @@ static irqreturn_t cv1800_vi_irq(int irq, void *data)
 	struct cv1800_vi *vi = data;
 	struct cv1800_vi_buffer *buf;
 	u32 ev0, ev1, ev2, s0, s1;
+	u64 sof = 0;
 	u16 vs;
 
 	ev0 = vi_read(vi, TOP_INT_EVENT0);
@@ -599,8 +624,20 @@ static irqreturn_t cv1800_vi_irq(int irq, void *data)
 			 vi_read(vi, BDG_CH0_DEBUG_1), vi_read(vi, BDG_CH0_DEBUG_2));
 	}
 
+	/*
+	 * After a frame of the wrong size the bridge can drop every frame
+	 * that follows. Disarm the front end and reset the block from
+	 * process context; the sensor keeps streaming meanwhile.
+	 */
+	if ((s0 & BDG_CH0_SIZE_ERR) && vi->running && !vi->skip) {
+		vi_update(vi, FE_FRAME_VLD, FE_FRAME_VLD_CH0 | FE_PQ_VLD_CH0, 0);
+		schedule_work(&vi->recover);
+		return IRQ_HANDLED;
+	}
+
+	/* A frame start handled together with a frame done belongs to the next frame */
 	if (ev2 & EV2_FRAME_START_FE0_CH0)
-		vi->sof_ts = ktime_get_ns();
+		sof = ktime_get_ns();
 
 	if ((ev2 & (EV2_FRAME_ERR | EV2_INT_DMA_ERR)) ||
 	    (s1 & (BDG_FIFO_OVERFLOW_INT | BDG_RES_OVER_MAX_INT | BDG_DMA_ERROR_INT))) {
@@ -616,15 +653,17 @@ static irqreturn_t cv1800_vi_irq(int irq, void *data)
 	 */
 	if ((s0 & BDG_CH0_VS_INT) && vi->skip) {
 		spin_lock(&vi->qlock);
-		if (!--vi->skip && vi->running && vi->active) {
-			vi_update(vi, FE_FRAME_VLD, FE_PQ_VLD_CH0, FE_PQ_VLD_CH0);
-			vi_update(vi, FE_FRAME_VLD, FE_FRAME_VLD_CH0, FE_FRAME_VLD_CH0);
+		if (!--vi->skip && vi->running) {
+			if (vi->active)
+				cv1800_vi_arm(vi);
+			else
+				cv1800_vi_arm_next(vi);
 		}
 		spin_unlock(&vi->qlock);
 	}
 
 	if (!(ev0 & EV0_FRAME_DONE_FE0_CH0))
-		return IRQ_HANDLED;
+		goto out;
 
 	spin_lock(&vi->qlock);
 	buf = vi->active;
@@ -644,6 +683,10 @@ static irqreturn_t cv1800_vi_irq(int irq, void *data)
 	if (vi->running)
 		cv1800_vi_arm_next(vi);
 	spin_unlock(&vi->qlock);
+
+out:
+	if (sof)
+		vi->sof_ts = sof;
 
 	return IRQ_HANDLED;
 }
@@ -781,9 +824,9 @@ static int cv1800_vi_sd_disable_streams(struct v4l2_subdev *sd,
 {
 	struct cv1800_vi *vi = sd_to_vi(sd);
 
+	cv1800_vi_hw_stop(vi);
 	if (!vi->pattern && vi->source)
 		v4l2_subdev_disable_streams(vi->source, vi->source_pad, BIT_ULL(0));
-	cv1800_vi_hw_stop(vi);
 
 	return 0;
 }
@@ -841,7 +884,7 @@ static void cv1800_vi_try_pix(struct v4l2_pix_format *pix,
 			      const struct cv1800_vi_format **fmt)
 {
 	const struct cv1800_vi_format *f = cv1800_vi_find_fourcc(pix->pixelformat);
-	u32 min_bpl;
+	u32 min_bpl, max_bpl;
 
 	if (!f)
 		f = &cv1800_vi_formats[0];
@@ -852,8 +895,9 @@ static void cv1800_vi_try_pix(struct v4l2_pix_format *pix,
 	pix->height = clamp_t(u32, ALIGN(pix->height, 2), CV1800_VI_MIN_SIZE,
 			      CV1800_VI_MAX_SIZE);
 	min_bpl = cv1800_vi_stride(pix->width);
+	max_bpl = cv1800_vi_stride(CV1800_VI_MAX_SIZE);
 	pix->bytesperline = clamp_t(u32, ALIGN(pix->bytesperline, 16), min_bpl,
-				    GENMASK(23, 0) & ~15);
+				    max_bpl);
 	pix->sizeimage = pix->bytesperline * pix->height;
 	pix->field = V4L2_FIELD_NONE;
 	pix->colorspace = V4L2_COLORSPACE_RAW;
@@ -1083,10 +1127,8 @@ static int cv1800_vi_start_streaming(struct vb2_queue *q, unsigned int count)
 	spin_lock_irqsave(&vi->qlock, flags);
 	vi->errors = 0;
 	vi->running = true;
-	cv1800_vi_arm_next(vi);
 	vi->skip = vi->pattern ? 0 : skip_frames;
-	if (vi->skip)
-		vi_update(vi, FE_FRAME_VLD, FE_FRAME_VLD_CH0 | FE_PQ_VLD_CH0, 0);
+	cv1800_vi_arm_next(vi);
 	spin_unlock_irqrestore(&vi->qlock, flags);
 
 	ret = v4l2_subdev_enable_streams(&vi->sd, CV1800_VI_PAD_SOURCE, BIT_ULL(0));
@@ -1109,6 +1151,44 @@ err_return:
 	return ret;
 }
 
+/* What the vendor driver does on a bridge size error, minus its other pipes */
+static void cv1800_vi_recover(struct work_struct *work)
+{
+	struct cv1800_vi *vi = container_of(work, struct cv1800_vi, recover);
+	unsigned long flags;
+
+	disable_irq(vi->irq);
+	spin_lock_irqsave(&vi->qlock, flags);
+	if (!vi->running) {
+		spin_unlock_irqrestore(&vi->qlock, flags);
+		enable_irq(vi->irq);
+		return;
+	}
+	/* Keep buf_queue from arming the front end during the reset */
+	vi->skip = 1;
+	spin_unlock_irqrestore(&vi->qlock, flags);
+
+	vi_update(vi, BDG_TOP_CTRL, BDG_ABORT, BDG_ABORT);
+	usleep_range(1000, 2000);
+	cv1800_vi_hw_setup(vi, vi->pattern);
+
+	spin_lock_irqsave(&vi->qlock, flags);
+	/* Arm the interrupted buffer again; it was never completed */
+	if (vi->active) {
+		list_add(&vi->active->list, &vi->buffers);
+		vi->active = NULL;
+	}
+	vi->skip = skip_frames;
+	if (vi->running)
+		cv1800_vi_arm_next(vi);
+	vi->recoveries++;
+	spin_unlock_irqrestore(&vi->qlock, flags);
+
+	cv1800_vi_hw_enable(vi, vi->pattern);
+	enable_irq(vi->irq);
+	dev_warn_ratelimited(vi->dev, "reset the bridge after a frame of the wrong size\n");
+}
+
 static void cv1800_vi_stop_streaming(struct vb2_queue *q)
 {
 	struct cv1800_vi *vi = vb2_get_drv_priv(q);
@@ -1117,12 +1197,15 @@ static void cv1800_vi_stop_streaming(struct vb2_queue *q)
 	spin_lock_irqsave(&vi->qlock, flags);
 	vi->running = false;
 	spin_unlock_irqrestore(&vi->qlock, flags);
+	/* A handler that saw running set may still schedule the work */
+	synchronize_irq(vi->irq);
+	cancel_work_sync(&vi->recover);
 
 	v4l2_subdev_disable_streams(&vi->sd, CV1800_VI_PAD_SOURCE, BIT_ULL(0));
 	cv1800_vi_return_buffers(vi, VB2_BUF_STATE_ERROR);
 	v4l2_ctrl_grab(vi->test_pattern, false);
 	video_device_pipeline_stop(&vi->vdev);
-	pm_runtime_put(vi->dev);
+	pm_runtime_put_sync(vi->dev);
 }
 
 static const struct vb2_ops cv1800_vi_qops = {
@@ -1397,7 +1480,8 @@ static int cv1800_vi_status_show(struct seq_file *s, void *unused)
 		   vi->ev0_seen, vi->ev2_seen);
 	seq_printf(s, "front end          vld %08x idle %08x\n",
 		   vi_read(vi, FE_FRAME_VLD), vi_read(vi, TOP_BLK_IDLE));
-	seq_printf(s, "frames %u, errors %u\n", vi->frames, vi->errors);
+	seq_printf(s, "frames %u, errors %u, bridge resets %u\n",
+		   vi->frames, vi->errors, vi->recoveries);
 
 	pm_runtime_put(vi->dev);
 
@@ -1418,6 +1502,7 @@ static int cv1800_vi_probe(struct platform_device *pdev)
 	mutex_init(&vi->lock);
 	spin_lock_init(&vi->qlock);
 	INIT_LIST_HEAD(&vi->buffers);
+	INIT_WORK(&vi->recover, cv1800_vi_recover);
 	platform_set_drvdata(pdev, vi);
 
 	vi->base = devm_platform_ioremap_resource(pdev, 0);
@@ -1460,7 +1545,7 @@ static int cv1800_vi_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 	dev_info(dev, "ISP revision %#x\n", vi_read(vi, TOP_SVN_VERSION));
-	pm_runtime_put(dev);
+	pm_runtime_put_sync(dev);
 
 	vi->mdev.dev = dev;
 	strscpy(vi->mdev.model, "Sophgo CV1800 VI", sizeof(vi->mdev.model));
@@ -1520,10 +1605,11 @@ static void cv1800_vi_remove(struct platform_device *pdev)
 	struct cv1800_vi *vi = platform_get_drvdata(pdev);
 
 	debugfs_remove_recursive(vi->debugfs);
-	media_device_unregister(&vi->mdev);
+	/* Stop a running stream first: it needs the media graph and the source */
+	vb2_video_unregister_device(&vi->vdev);
 	v4l2_async_nf_unregister(&vi->notifier);
 	v4l2_async_nf_cleanup(&vi->notifier);
-	vb2_video_unregister_device(&vi->vdev);
+	media_device_unregister(&vi->mdev);
 	media_entity_cleanup(&vi->vdev.entity);
 	cv1800_vi_cleanup_subdev(vi);
 	v4l2_device_unregister(&vi->v4l2_dev);
