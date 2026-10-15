@@ -1372,6 +1372,8 @@ static int cv1800_vi_init_video(struct cv1800_vi *vi)
 	q->buf_struct_size = sizeof(struct cv1800_vi_buffer);
 	q->ops = &cv1800_vi_qops;
 	q->mem_ops = &vb2_dma_contig_memops;
+	/* Full-size frames can exhaust CMA: REQBUFS then returns fewer buffers */
+	q->gfp_flags = __GFP_NOWARN;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC |
 			     V4L2_BUF_FLAG_TSTAMP_SRC_SOE;
 	q->lock = &vi->lock;

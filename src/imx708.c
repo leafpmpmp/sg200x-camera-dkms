@@ -982,6 +982,7 @@ static int imx708_set_fmt(struct v4l2_subdev *sd,
 	struct imx708 *imx708 = to_imx708(sd);
 	const struct imx708_mode *mode;
 	struct v4l2_mbus_framefmt *format;
+	u32 old_width, old_height;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
 	    v4l2_subdev_is_streaming(sd))
@@ -992,13 +993,25 @@ static int imx708_set_fmt(struct v4l2_subdev *sd,
 				      fmt->format.height);
 
 	format = v4l2_subdev_state_get_format(state, fmt->pad);
+	old_width = format->width;
+	old_height = format->height;
 	format->width = mode->width;
 	format->height = mode->height;
 	format->code = imx708_get_format_code(imx708);
-	fmt->format = *format;
 
-	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
-		return imx708_apply_mode(imx708, mode);
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
+		struct ccs_pll old_pll = imx708->pll;
+		int ret = imx708_apply_mode(imx708, mode);
+
+		/* Keep the old mode: the PLL calculation clears imx708->pll */
+		if (ret) {
+			imx708->pll = old_pll;
+			format->width = old_width;
+			format->height = old_height;
+			return ret;
+		}
+	}
+	fmt->format = *format;
 
 	return 0;
 }
