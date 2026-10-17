@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+comment "Sophgo media platform drivers"
+
+config VIDEO_SOPHGO_CV1800_CSI2
+	tristate "Sophgo CV1800/SG2000 MIPI CSI-2 receiver"
+	depends on V4L_PLATFORM_DRIVERS
+	depends on VIDEO_DEV && COMMON_CLK && RESET_CONTROLLER && OF
+	depends on ARCH_SOPHGO || COMPILE_TEST
+	depends on PM
+	select MEDIA_CONTROLLER
+	select MFD_SYSCON
+	select V4L2_FWNODE
+	select VIDEO_V4L2_SUBDEV_API
+	help
+	  MIPI CSI-2 receiver MAC 0 and its D-PHY on Sophgo CV1800 and
+	  SG2000 SoCs.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called cv1800-csi2.
+
+config VIDEO_SOPHGO_CV1800_VI
+	tristate "Sophgo CV1800/SG2000 video input raw capture"
+	depends on V4L_PLATFORM_DRIVERS
+	depends on VIDEO_DEV && COMMON_CLK && RESET_CONTROLLER && OF && HAS_DMA
+	depends on ARCH_SOPHGO || COMPILE_TEST
+	depends on PM
+	select MEDIA_CONTROLLER
+	select MFD_SYSCON
+	select V4L2_FWNODE
+	select VIDEO_V4L2_SUBDEV_API
+	select VIDEOBUF2_DMA_CONTIG
+	help
+	  Raw Bayer capture through the video input (VI) block of Sophgo
+	  CV1800 and SG2000 SoCs. The ISP is not used.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called cv1800-vi.

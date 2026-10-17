@@ -1,11 +1,11 @@
 # sg200x-camera-dkms
 
-Camera support for Sophgo SG200x boards on mainline Linux, kept out of the
-kernel tree and built on the board by DKMS.
+Camera support for Sophgo SG200x boards on mainline Linux. Armbian builds it
+into its sophgo-sg200x kernels; other kernels build it on the board with DKMS.
 
-Tested on the Milk-V Duo S under Armbian with Linux 7.2: a Raspberry Pi Camera
-Module 3 on both of its cores (C906 riscv64 and Cortex-A53 arm64), and a Camera
-Module v1 on the C906.
+Tested on the Milk-V Duo S under Armbian with Linux 7.2, on both of its cores
+(C906 riscv64 and Cortex-A53 arm64): a Raspberry Pi Camera Module 3 and a
+Camera Module v1 on J2, and a Milk-V CAM-GC2083 on J1 (riscv64 only).
 
 ## What is in it
 
@@ -14,12 +14,23 @@ Module v1 on the C906.
 | `cv1800-vi`   | Raw capture through the VI block's CSI bridge: frames go to memory as packed 12-bit Bayer, with no ISP processing. Media-controller driver with a bridge sub-device (including the bridge's test pattern generator) and a video node. |
 | `cv1800-csi2` | MIPI CSI-2 receiver: MAC 0 and the D-PHY, lanes taken from the device tree. |
 | `imx708`      | Sony IMX708 driver from its upstream v2 series, plus the 2x2 binned 2304x1296 mode and power-off between streams (see Limitations). |
-| `dw9817-vcm`  | The Camera Module 3's focus motor driver, based on `dw9807-vcm`. |
-| `ov5647`      | Mainline's OV5647 driver (Camera Module v1), which Armbian kernels do not build. |
+| `gc2083`      | GalaxyCore GC2083 driver (Milk-V CAM-GC2083), by Lukasz Sobala. |
+| `dw9817-vcm`  | DKMS only: the Camera Module 3's focus motor driver, based on `dw9807-vcm`. Armbian's kernels add the DW9817 to `dw9807-vcm` itself. |
+| `ov5647`      | DKMS only: mainline's OV5647 driver (Camera Module v1), for kernels that do not build it. |
 
-Plus two device tree overlays for the Duo S J2 connector:
-`sg2000-camera-j2-imx708` (Camera Module 3) and `sg2000-camera-j2-ov5647`
-(Camera Module v1). Enable one of them.
+Plus device tree overlays for the Duo S connectors:
+`sg2000-camera-j2-imx708` (Camera Module 3 on J2), `sg2000-camera-j2-ov5647`
+(Camera Module v1 on J2) and `sg2000-camera-j1-gc2083` (CAM-GC2083 on J1).
+Enable one of them: all cameras use the same CSI-2 receiver.
+
+## Armbian
+
+Armbian's `sophgo-sg200x-camera` extension copies `linux/` into the kernel
+tree and builds the drivers and overlays with the kernel. Its kernels need
+nothing from this package. Enable a camera in `/boot/armbianEnv.txt` and
+reboot:
+
+    overlays=camera-j2-imx708    # or camera-j2-ov5647, camera-j1-gc2083
 
 ## Requirements
 
@@ -42,12 +53,12 @@ On the board, install the kernel headers first, then the package. DKMS builds
 the modules and rebuilds them for every kernel installed later:
 
     apt install linux-headers-edge-sophgo-sg200x-riscv64   # your kernel's
-    apt install ./sg200x-camera-dkms_0.1.0_riscv64.deb
+    apt install ./sg200x-camera-dkms_0.2.0_riscv64.deb
 
 Enable the overlay by adding it to `user_overlays=` in `/boot/armbianEnv.txt`,
 then reboot:
 
-    user_overlays=sg2000-camera-j2-imx708    # or sg2000-camera-j2-ov5647
+    user_overlays=sg2000-camera-j2-imx708    # or sg2000-camera-j2-ov5647, sg2000-camera-j1-gc2083
 
 `media-ctl -p` should then show the sensor, the CSI-2 receiver, the bridge
 and the video node.
@@ -104,16 +115,16 @@ only read while the hardware is powered.
 
 ## Limitations
 
-- Only the Camera Module 3 and v1 on J2 are described. Other sensors need
-  their own overlay, and a driver where mainline has none. J1, Milk-V's
-  camera connector, uses other D-PHY lanes and is untested.
+- Only the Camera Module 3 and v1 on J2 and the CAM-GC2083 on J1 are
+  described. Other sensors need their own overlay, and a driver where
+  mainline has none.
 - Raw capture only: the SoC's hardware ISP is not used.
 - The first frame after the sensor starts is short. The bridge drops it, but a
   front end armed for it never finishes, so `cv1800-vi` arms only after
   `skip_frames` frames have gone by.
 - Restarting the IMX708 from software standby stalls it (it reports streaming
   but its frame counter stops), so the driver powers it off as soon as it
-  stops streaming and every start is a cold start.
+  stops streaming and every start programs it from scratch.
 - OV5647 at 2592x1944: the sensor sends extra packets that the receiver
   counts as CRC errors. Image lines stay intact. Once per boot, one of these
   packets adds a line to a frame. The bridge then drops every frame until
@@ -123,11 +134,13 @@ only read while the hardware is powered.
 
 ## Layout
 
-    src/          the drivers
-    src/linux/    private copies of kernel code: the CCS PLL calculator with
-                  the patch it needs, the CCI helpers, and mainline's ov5647
-                  driver (scripts/update-linux-copies.sh)
-    dts/          the overlays and their shared J2 part
+    linux/        the drivers, overlays and bindings at their kernel paths,
+                  with the Kconfig and Makefiles that build them in-tree
+    armbian/      the overlay Makefile lines Armbian's extension appends
+    src/          DKMS only: dw9817-vcm and the CCI wrappers
+    src/linux/    DKMS only: private copies of kernel code: the CCS PLL
+                  calculator with the patch it needs, the CCI helpers, and
+                  mainline's ov5647 driver (scripts/update-linux-copies.sh)
     packaging/    Debian package metadata and maintainer scripts
     scripts/      package and copy-refresh scripts
     tools/        capture helper
@@ -135,5 +148,5 @@ only read while the hardware is powered.
 
 ## License
 
-GPL-2.0. The overlay is GPL-2.0 OR MIT. `packaging/copyright` lists the code
+GPL-2.0. The overlays are GPL-2.0 OR MIT. `packaging/copyright` lists the code
 taken from Linux and from the IMX708 series, with its authors.

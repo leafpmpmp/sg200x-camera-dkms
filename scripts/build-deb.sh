@@ -5,8 +5,8 @@
 #
 #   scripts/build-deb.sh riscv64|arm64 <linux source tree>
 #
-# The Linux tree is only needed for the device tree headers the overlay
-# includes. Needs cpp, dtc and dpkg-deb; without dpkg-deb on the host, it is
+# The Linux tree is only needed for the device tree headers the overlays
+# include. Needs cpp, dtc and dpkg-deb; without dpkg-deb on the host, it is
 # run in a Debian container if docker is available. MAINTAINER overrides the
 # git identity written into the package.
 set -e
@@ -16,8 +16,8 @@ TOP=$(cd "$(dirname "$0")/.." && pwd)
 VERSION=$(sed -n 's/^PACKAGE_VERSION="\(.*\)"$/\1/p' "$TOP/dkms.conf")
 MAINTAINER=${MAINTAINER:-"$(git -C "$TOP" config user.name) <$(git -C "$TOP" config user.email)>"}
 case $ARCH in
-	riscv64) DTSDEF= ;;
-	arm64) DTSDEF=-DSG2000_ARM64 ;;
+	riscv64) DTARCH=riscv ;;
+	arm64) DTARCH=arm64 ;;
 	*) echo "unknown architecture $ARCH" >&2; exit 1 ;;
 esac
 
@@ -32,15 +32,25 @@ mkdir -p "$SRC" "$DOC" "$ROOT/DEBIAN" "$ROOT/usr/lib/sg200x-camera"
 cp "$TOP/dkms.conf" "$TOP/Kbuild" "$TOP/Makefile" "$SRC/"
 cp -r "$TOP/src" "$SRC/"
 rm -rf "$SRC/src/linux/patches"
+mkdir -p "$SRC/linux"
+cp -r "$TOP/linux/drivers" "$SRC/linux/"
 
-# The overlays, for this architecture's interrupt controller. The postinst
-# copies them into /boot, which dpkg cannot manage on Armbian's FAT partition.
-for dtso in "$TOP"/dts/*.dtso; do
+# The overlays of this architecture. Like the kernel's dts tree, they include
+# <riscv/sophgo/...>: the overlay directory is ours, the rest the kernel's.
+# The postinst copies them into /boot, which dpkg cannot manage on Armbian's
+# FAT partition.
+INC=$OUT/include
+rm -rf "$INC"
+mkdir -p "$INC/riscv/sophgo"
+ln -s "$KSRC/arch/riscv/boot/dts/sophgo/cv18xx-reset.h" "$INC/riscv/sophgo/"
+ln -s "$TOP/linux/arch/riscv/boot/dts/sophgo/overlay" "$INC/riscv/sophgo/overlay"
+for dtso in "$TOP/linux/arch/$DTARCH/boot/dts/sophgo/overlay"/*.dtso; do
 	name=$(basename "$dtso" .dtso)
-	cpp -nostdinc -undef -D__DTS__ $DTSDEF -x assembler-with-cpp \
-		-I "$KSRC/include" -I "$KSRC/arch/riscv/boot/dts/sophgo" -I "$TOP/dts" "$dtso" |
+	cpp -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
+		-I "$INC" -I "$KSRC/include" "$dtso" |
 		dtc -@ -q -I dts -O dtb -o "$ROOT/usr/lib/sg200x-camera/$name.dtbo" -
 done
+rm -rf "$INC"
 
 cp "$TOP/README.md" "$TOP/packaging/copyright" "$DOC/"
 for s in postinst prerm postrm; do

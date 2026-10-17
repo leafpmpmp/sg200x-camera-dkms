@@ -2,7 +2,8 @@
 set -e
 
 if [ "$1" = remove ] || [ "$1" = purge ]; then
-	rm -f /boot/overlay-user/sg2000-camera-j2-imx708.dtbo \
+	rm -f /boot/overlay-user/sg2000-camera-j1-gc2083.dtbo \
+		/boot/overlay-user/sg2000-camera-j2-imx708.dtbo \
 		/boot/overlay-user/sg2000-camera-j2-ov5647.dtbo
 fi
 exit 0

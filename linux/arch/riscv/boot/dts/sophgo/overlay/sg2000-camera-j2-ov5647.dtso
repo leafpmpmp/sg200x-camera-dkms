@@ -2,12 +2,15 @@
 /*
  * Raspberry Pi Camera Module v1 (OmniVision OV5647) on the Milk-V Duo S J2
  * connector. Sensor at 0x36, clocked by the module's 25 MHz oscillator.
+ *
+ * Enable with overlays=camera-j2-ov5647 in /boot/armbianEnv.txt.
+ * Use a ribbon cable of 150 mm or less: longer cables cause I2C errors on J2.
  */
 /dts-v1/;
 /plugin/;
 
 #define J2_CAM_CLOCK_HZ 25000000
-#include "sg2000-j2-camera.dtsi"
+#include "sg2000-camera-j2.dtsi"
 
 &i2c2 {
 	#address-cells = <1>;

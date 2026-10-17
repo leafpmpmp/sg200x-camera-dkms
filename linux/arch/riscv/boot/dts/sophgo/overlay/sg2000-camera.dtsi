@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/*
+ * Shared part of the Milk-V Duo S camera overlays: the CSI-2 receiver
+ * (MAC 0) and the VI capture block. A camera overlay includes this file,
+ * adds its sensor with the endpoint labelled sensor_out, and sets the
+ * receiver lanes of its connector in &csi2_in.
+ *
+ * Only one camera overlay can be active: all of them use CSI-2 MAC 0.
+ */
+
+#include <dt-bindings/clock/sophgo,cv1800.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <riscv/sophgo/cv18xx-reset.h>
+
+/* The arm64 overlays define these first, for the GIC */
+#ifndef SOC_PERIPHERAL_IRQ
+#define SOC_PERIPHERAL_IRQ(nr)	((nr) + 16)
+#define SOC_INTC		&plic
+#endif
+
+&{/soc} {
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	vip_sys: syscon@a0c8000 {
+		compatible = "sophgo,sg2000-vip-sys", "syscon";
+		reg = <0x0a0c8000 0x100>;
+	};
+
+	csi@a0c2000 {
+		compatible = "sophgo,sg2000-csi2";
+		reg = <0x0a0c2000 0x2000>, <0x0a0d0000 0x1000>,
+		      <0x03001c30 0x30>;
+		reg-names = "mac", "phy", "pad";
+		interrupt-parent = <SOC_INTC>;
+		interrupts = <SOC_PERIPHERAL_IRQ(10) IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&clk CLK_SRC_VIP_SYS_2>, <&clk CLK_AXI_VIP>,
+			 <&clk CLK_CFG_REG_VIP>, <&clk CLK_CSI_MAC0_VIP>,
+			 <&clk CLK_CSI0_RX_VIP>;
+		clock-names = "sys2", "axi", "cfg", "mac", "rx";
+		resets = <&rst 70>, <&rst 71>;
+		reset-names = "phy", "phy-apb";
+		sophgo,vip-sys = <&vip_sys>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				csi2_in: endpoint {
+					remote-endpoint = <&sensor_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+				csi2_out: endpoint {
+					remote-endpoint = <&vi_in>;
+				};
+			};
+		};
+	};
+
+	video-input@a000000 {
+		compatible = "sophgo,sg2000-vi";
+		reg = <0x0a000000 0x80000>;
+		interrupt-parent = <SOC_INTC>;
+		interrupts = <SOC_PERIPHERAL_IRQ(8) IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&clk CLK_SRC_VIP_SYS_0>, <&clk CLK_SRC_VIP_SYS_1>,
+			 <&clk CLK_SRC_VIP_SYS_2>, <&clk CLK_SRC_VIP_SYS_3>,
+			 <&clk CLK_AXI_VIP>, <&clk CLK_CFG_REG_VIP>,
+			 <&clk CLK_ISP_TOP_VIP>, <&clk CLK_CSI_BE_VIP>,
+			 <&clk CLK_RAW_VIP>, <&clk CLK_CSI_MAC0_VIP>;
+		clock-names = "sys0", "sys1", "sys2", "sys3", "axi", "cfg",
+			      "isp_top", "csi_be", "raw", "csi_mac0";
+		resets = <&rst RST_VIPSYS>;
+		sophgo,vip-sys = <&vip_sys>;
+
+		port {
+			vi_in: endpoint {
+				remote-endpoint = <&csi2_out>;
+			};
+		};
+	};
+};

@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/* The riscv overlay, with the GIC's interrupt numbers */
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+#define SOC_PERIPHERAL_IRQ(nr)	GIC_SPI (nr)
+#define SOC_INTC		&gic
+
+#include <riscv/sophgo/overlay/sg2000-camera-j2-ov5647.dtso>

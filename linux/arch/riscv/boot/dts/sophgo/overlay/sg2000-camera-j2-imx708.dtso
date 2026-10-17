@@ -2,12 +2,15 @@
 /*
  * Raspberry Pi Camera Module 3 (Sony IMX708 with a DW9817 focus driver) on
  * the Milk-V Duo S J2 connector. Sensor at 0x1a, focus driver at 0x0c.
+ *
+ * Enable with overlays=camera-j2-imx708 in /boot/armbianEnv.txt.
+ * Use a ribbon cable of 150 mm or less: longer cables cause I2C errors on J2.
  */
 /dts-v1/;
 /plugin/;
 
 #define J2_CAM_CLOCK_HZ 24000000
-#include "sg2000-j2-camera.dtsi"
+#include "sg2000-camera-j2.dtsi"
 
 &i2c2 {
 	#address-cells = <1>;
@@ -36,7 +39,6 @@
 	};
 
 	vcm: focus@c {
-		/* dw9817-vcm from sg200x-camera-dkms; mainline knows only the DW9807 */
 		compatible = "dongwoon,dw9817-vcm";
 		reg = <0x0c>;
 		vdd-supply = <&cam1_reg>;

@@ -5,10 +5,23 @@ Files: *
 Copyright: 2026 morikon <leafpmpmp@gmail.com>
 License: GPL-2.0
 
-Files: src/imx708.c
+Files: linux/drivers/media/i2c/sg200x-camera/imx708.c
 Copyright: 2022-2026 Raspberry Pi Ltd
            2026 Ideas on Board Oy
 License: GPL-2.0
+
+Files: linux/drivers/media/i2c/sg200x-camera/gc2083.c
+Copyright: 2026 Lukasz Sobala <lsobala1@gmail.com>
+License: GPL-2.0
+
+Files: linux/Documentation/devicetree/bindings/media/i2c/sony,imx708.yaml
+Copyright: 2026 Raspberry Pi Ltd
+           2026 Ideas on Board Oy
+License: GPL-2.0 or BSD-2-Clause
+
+Files: linux/Documentation/devicetree/bindings/media/i2c/galaxycore,gc2083.yaml
+Copyright: 2026 Lukasz Sobala <lsobala1@gmail.com>
+License: GPL-2.0 or BSD-2-Clause
 
 Files: src/dw9817-vcm.c
 Copyright: 2018 Intel Corporation
@@ -29,12 +42,13 @@ Copyright: 2016 Synopsys, Inc.
            2006-2007 Jonathan Corbet
 License: GPL-2.0
 
-Files: src/linux/v4l2-cci.c src/ov5647-cci.c
+Files: src/linux/v4l2-cci.c src/ov5647-cci.c src/gc2083-cci.c
 Copyright: 2023 Hans de Goede
 License: GPL-2.0
 
-Files: dts/*
+Files: linux/arch/*
 Copyright: 2026 morikon <leafpmpmp@gmail.com>
+           2026 Lukasz Sobala <lsobala1@gmail.com>
 License: GPL-2.0 or MIT
 
 License: GPL-2.0
