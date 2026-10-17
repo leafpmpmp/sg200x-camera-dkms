@@ -26,9 +26,9 @@ Enable one of them: all cameras use the same CSI-2 receiver.
 ## Armbian
 
 Armbian's `sophgo-sg200x-camera` extension copies `linux/` into the kernel
-tree and builds the drivers and overlays with the kernel. Its kernels need
-nothing from this package. Enable a camera in `/boot/armbianEnv.txt` and
-reboot:
+tree and builds the drivers and overlays with the kernel. Do not install this
+package on these kernels: DKMS modules replace the kernel's own. Enable a
+camera in `/boot/armbianEnv.txt` and reboot:
 
     overlays=camera-j2-imx708    # or camera-j2-ov5647, camera-j1-gc2083
 
@@ -79,7 +79,8 @@ Without the package, `make KDIR=/path/to/kernel/build` builds the modules, and
   `cv1800-vi` driver: `extras/libcamera/libcamera-sg200x.patch` (against
   v0.7.2) adds it, with an IMX708 tuning file. At 720p the software ISP runs
   at about 15 fps on the Cortex-A53 and 5 to 6 fps on the C906.
-- **Focus**: `focus_absolute` (0-1023) on the `dw9817` sub-device. The lens is
+- **Focus**: `focus_absolute` (0-1023) on the lens sub-device, `dw9817` (or
+  `dw9807` on Armbian's kernels). The lens is
   only powered while something holds that node open; libcamera does.
 - **Orientation**: the Camera Module 3 overlay declares the sensor as rotated
   by 180 degrees, so libcamera flips it upright. The v1 needs no rotation.
@@ -94,6 +95,7 @@ The sensors themselves deliver:
 | OV5647 | 1920x1080 | 25 fps |
 | OV5647 | 1296x972 | 24 fps |
 | OV5647 | 640x480 | 62.5 fps |
+| GC2083 | 1920x1080 | 29.7 fps |
 
 ## Debugging
 

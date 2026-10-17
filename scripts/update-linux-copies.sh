@@ -6,12 +6,11 @@
 #   scripts/update-linux-copies.sh <linux source tree>
 #
 # The imx708 module needs the CCS PLL calculator with the change from the
-# IMX708 v2 series (src/linux/patches/). The imx708 and ov5647 modules need
-# the V4L2 CCI register helpers, which kernels only build when an in-tree
-# driver selects them. The helpers are compiled into each module; their
-# exports are dropped so they never collide with the kernel's own ccs-pll or
-# v4l2-cci modules. ov5647.c is mainline's driver, which Armbian kernels do
-# not build.
+# IMX708 v2 series (src/linux/patches/). The sensor modules need the V4L2
+# CCI register helpers, which kernels only build when an in-tree driver
+# selects them. The helpers are compiled into each module; their exports are
+# dropped so they never collide with the kernel's own ccs-pll or v4l2-cci
+# modules. ov5647.c is mainline's driver, for kernels that do not build it.
 set -e
 KSRC=${1:?usage: $0 <linux source tree>}
 TOP=$(cd "$(dirname "$0")/.." && pwd)
