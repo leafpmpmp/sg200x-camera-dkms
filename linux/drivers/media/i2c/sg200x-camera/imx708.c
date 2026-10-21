@@ -46,6 +46,9 @@
 #define IMX708_REG_ACROPLP_EN		CCI_REG8(0x32df)
 #define IMX708_REG_BINNING_PRIORITY_H	CCI_REG8(0x3200)
 #define IMX708_REG_BINNING_PRIORITY_V	CCI_REG8(0x3201)
+/* Purpose unknown, but they follow the output size: width / 16, height / 12 */
+#define IMX708_REG_OUT_WIDTH_16		CCI_REG16(0x341e)
+#define IMX708_REG_OUT_HEIGHT_12	CCI_REG16(0x3420)
 
 /* Long exposure multiplier */
 #define IMX708_LONG_EXP_SHIFT_MAX	7
@@ -129,21 +132,23 @@ static const u8 pdaf_gains[2][9] = {
 };
 
 /*
- * Readout modes. Both read the whole active area. Full resolution re-mosaics
- * the quad-Bayer array into regular Bayer; the binned mode instead sums each
- * 2x2 group of same-colour pixels and reads out at half the line length.
+ * Readout modes. Full resolution re-mosaics the quad-Bayer array into regular
+ * Bayer; the binned modes instead sum each 2x2 group of same-colour pixels and
+ * read out at half the line length. The 1920x1080 mode bins a centred
+ * 3840x2160 window, the other modes read the whole active area.
  *
- * The binned mode's register values, including those of unknown purpose,
- * come from the Raspberry Pi downstream driver's 2x2 binned mode.
+ * The binned register values, including those of unknown purpose, come from
+ * the Raspberry Pi downstream driver's 2x2 binned mode.
  */
 struct imx708_mode {
 	u32 width;
 	u32 height;
+	struct v4l2_rect crop;		/* pixel array window read out */
 	u32 line_length;		/* LINE_LENGTH_PCK */
 	u32 pixel_rate;			/* pixel array rate the PLL runs at */
 	u32 vblank_min;
 	u32 exposure_min;
-	u32 exposure_step;		/* the binned mode wants even lines */
+	u32 exposure_step;		/* the binned modes want even lines */
 	const struct cci_reg_sequence *regs;
 	unsigned int num_regs;
 };
@@ -156,10 +161,6 @@ static const struct cci_reg_sequence imx708_full_regs[] = {
 	{ IMX708_REG_BINNING_PRIORITY_V, 0x01 },
 	{ IMX708_REG_QBC_RMSC_EN, 0x01 },
 	{ IMX708_REG_LPF_INTENSITY_EN, IMX708_LPF_INTENSITY_ENABLED },
-	{ CCI_REG8(0x341e), 0x01 },
-	{ CCI_REG8(0x341f), 0x20 },
-	{ CCI_REG8(0x3420), 0x00 },
-	{ CCI_REG8(0x3421), 0xd8 },
 	{ CCI_REG8(0x3ca1), 0x64 },
 	{ CCI_REG8(0x3ca5), 0x00 },
 	{ CCI_REG8(0x3cb9), 0x08 },
@@ -177,11 +178,6 @@ static const struct cci_reg_sequence imx708_binned_regs[] = {
 	/* Nothing to re-mosaic: binning yields regular Bayer */
 	{ IMX708_REG_QBC_RMSC_EN, 0x00 },
 	{ IMX708_REG_LPF_INTENSITY_EN, IMX708_LPF_INTENSITY_DISABLED },
-	/* These two pairs follow the output size: width / 16, height / 12 */
-	{ CCI_REG8(0x341e), 0x00 },
-	{ CCI_REG8(0x341f), 0x90 },
-	{ CCI_REG8(0x3420), 0x00 },
-	{ CCI_REG8(0x3421), 0x6c },
 	{ CCI_REG8(0x3ca1), 0x3c },
 	{ CCI_REG8(0x3ca5), 0x3c },
 	{ CCI_REG8(0x3cb9), 0x1c },
@@ -194,6 +190,12 @@ static const struct imx708_mode imx708_modes[] = {
 	{
 		.width = 4608,
 		.height = 2592,
+		.crop = {
+			.left = 16,
+			.top = 24,
+			.width = 4608,
+			.height = 2592,
+		},
 		.line_length = IMX708_LINE_LENGTH,
 		.pixel_rate = 595200000,
 		.vblank_min = 58,
@@ -204,6 +206,28 @@ static const struct imx708_mode imx708_modes[] = {
 	}, {
 		.width = 2304,
 		.height = 1296,
+		.crop = {
+			.left = 16,
+			.top = 24,
+			.width = 4608,
+			.height = 2592,
+		},
+		.line_length = 7824,
+		.pixel_rate = 585600000,
+		.vblank_min = 40,
+		.exposure_min = 4,
+		.exposure_step = 2,
+		.regs = imx708_binned_regs,
+		.num_regs = ARRAY_SIZE(imx708_binned_regs),
+	}, {
+		.width = 1920,
+		.height = 1080,
+		.crop = {
+			.left = 16 + (4608 - 3840) / 2,
+			.top = 24 + (2592 - 2160) / 2,
+			.width = 3840,
+			.height = 2160,
+		},
 		.line_length = 7824,
 		.pixel_rate = 585600000,
 		.vblank_min = 40,
@@ -652,7 +676,7 @@ static int imx708_init_state(struct v4l2_subdev *sd,
 
 	/* Initialize the image pad crop. */
 	crop = v4l2_subdev_state_get_crop(state, IMX708_SOURCE_PAD);
-	*crop = imx708_active_area;
+	*crop = imx708_modes[0].crop;
 
 	return 0;
 }
@@ -714,6 +738,9 @@ static int imx708_program_window(struct imx708 *imx708,
 
 	/* Binning, re-mosaic and the mode's remaining settings */
 	cci_multi_reg_write(imx708->cci, mode->regs, mode->num_regs, &ret);
+	cci_write(imx708->cci, IMX708_REG_OUT_WIDTH_16, format->width / 16, &ret);
+	cci_write(imx708->cci, IMX708_REG_OUT_HEIGHT_12, format->height / 12,
+		  &ret);
 
 	/* Digital crop (fixed: no crop) */
 	cci_write(imx708->cci, CCS_R_DIGITAL_CROP_X_OFFSET, 0, &ret);
@@ -982,6 +1009,7 @@ static int imx708_set_fmt(struct v4l2_subdev *sd,
 	struct imx708 *imx708 = to_imx708(sd);
 	const struct imx708_mode *mode;
 	struct v4l2_mbus_framefmt *format;
+	struct v4l2_rect *crop, old_crop;
 	u32 old_width, old_height;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
@@ -993,11 +1021,14 @@ static int imx708_set_fmt(struct v4l2_subdev *sd,
 				      fmt->format.height);
 
 	format = v4l2_subdev_state_get_format(state, fmt->pad);
+	crop = v4l2_subdev_state_get_crop(state, fmt->pad);
 	old_width = format->width;
 	old_height = format->height;
+	old_crop = *crop;
 	format->width = mode->width;
 	format->height = mode->height;
 	format->code = imx708_get_format_code(imx708);
+	*crop = mode->crop;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
 		struct ccs_pll old_pll = imx708->pll;
@@ -1008,6 +1039,7 @@ static int imx708_set_fmt(struct v4l2_subdev *sd,
 			imx708->pll = old_pll;
 			format->width = old_width;
 			format->height = old_height;
+			*crop = old_crop;
 			return ret;
 		}
 	}
