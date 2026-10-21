@@ -11,9 +11,12 @@
  * generator. Frames land in memory as packed 12-bit Bayer, two pixels in
  * three bytes (the MIPI RAW12 layout), with lines padded to 16 bytes.
  *
- * The front end is armed one frame at a time: the hardware drops frames
- * that start while it is not armed, and the frame-done interrupt hands
- * the next buffer to the DMA and re-arms it.
+ * The front end captures a frame only when it is armed at frame start. At
+ * that point it latches the DMA address and clears the arm bit, so the
+ * driver sets up and arms the next buffer as soon as a frame starts. Arming
+ * at frame done can miss the next frame: the vertical blanking can be
+ * shorter than the interrupt latency plus the cache maintenance of the
+ * completed buffer.
  *
  * Copyright (C) 2026 morikon <leafpmpmp@gmail.com>
  */
@@ -300,8 +303,10 @@ struct cv1800_vi {
 
 	spinlock_t qlock;		/* buffer list and DMA arming */
 	struct list_head buffers;
-	struct cv1800_vi_buffer *active;
+	struct cv1800_vi_buffer *active;	/* frame in progress or armed */
+	struct cv1800_vi_buffer *next;		/* armed for the frame after it */
 	bool running;
+	u16 arm_trig;			/* bridge trigger count at the last arm */
 	unsigned int pattern;		/* test pattern latched at stream start */
 	u16 last_vs;
 	u32 frames;
@@ -524,24 +529,43 @@ static void cv1800_vi_hw_setup(struct cv1800_vi *vi, unsigned int pattern)
 		 EV2_INT_DMA_ERR);
 }
 
+/* The bridge counts the frames that start while the front end is armed */
+static u16 cv1800_vi_trig_count(struct cv1800_vi *vi)
+{
+	return FIELD_GET(BDG_CH0_TRIG_CNT, vi_read(vi, BDG_CH0_DEBUG_2));
+}
+
 /* Called with qlock held */
 static void cv1800_vi_arm(struct cv1800_vi *vi)
 {
+	vi->arm_trig = cv1800_vi_trig_count(vi);
 	vi_update(vi, FE_FRAME_VLD, FE_PQ_VLD_CH0, FE_PQ_VLD_CH0);
 	vi_update(vi, FE_FRAME_VLD, FE_FRAME_VLD_CH0, FE_FRAME_VLD_CH0);
 }
 
-/* Call with qlock held. While frames are skipped, the VS interrupt arms. */
+/*
+ * Call with qlock held. Hand the next buffer to the DMA when nothing is in
+ * flight, or else as soon as the frame of the active buffer has started.
+ * While frames are skipped, the VS interrupt arms.
+ */
 static void cv1800_vi_arm_next(struct cv1800_vi *vi)
 {
 	struct cv1800_vi_buffer *buf;
 	dma_addr_t addr;
 
+	if (!vi->running || vi->next)
+		return;
+	if (vi->active && (vi->skip || cv1800_vi_trig_count(vi) == vi->arm_trig))
+		return;
+
 	buf = list_first_entry_or_null(&vi->buffers, struct cv1800_vi_buffer, list);
 	if (!buf)
 		return;
 	list_del(&buf->list);
-	vi->active = buf;
+	if (vi->active)
+		vi->next = buf;
+	else
+		vi->active = buf;
 
 	addr = vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
 	vi_write(vi, DMA_BASE_ADDR, lower_32_bits(addr));
@@ -549,6 +573,17 @@ static void cv1800_vi_arm_next(struct cv1800_vi *vi)
 		  FIELD_PREP(DMA_BASEH, upper_32_bits(addr)));
 	if (!vi->skip)
 		cv1800_vi_arm(vi);
+}
+
+/* Call with qlock held. Put the buffers in flight back at the queue head. */
+static void cv1800_vi_requeue(struct cv1800_vi *vi)
+{
+	if (vi->next)
+		list_add(&vi->next->list, &vi->buffers);
+	if (vi->active)
+		list_add(&vi->active->list, &vi->buffers);
+	vi->next = NULL;
+	vi->active = NULL;
 }
 
 static void cv1800_vi_hw_enable(struct cv1800_vi *vi, bool pattern)
@@ -595,7 +630,8 @@ static void cv1800_vi_hw_stop(struct cv1800_vi *vi)
 static irqreturn_t cv1800_vi_irq(int irq, void *data)
 {
 	struct cv1800_vi *vi = data;
-	struct cv1800_vi_buffer *buf;
+	enum vb2_buffer_state state = VB2_BUF_STATE_DONE;
+	struct cv1800_vi_buffer *buf = NULL;
 	u32 ev0, ev1, ev2, s0, s1;
 	u64 sof = 0;
 	u16 vs;
@@ -662,31 +698,41 @@ static irqreturn_t cv1800_vi_irq(int irq, void *data)
 		spin_unlock(&vi->qlock);
 	}
 
-	if (!(ev0 & EV0_FRAME_DONE_FE0_CH0))
-		goto out;
+	if (ev0 & EV0_FRAME_DONE_FE0_CH0) {
+		spin_lock(&vi->qlock);
+		buf = vi->active;
+		vi->active = vi->next;
+		vi->next = NULL;
+		if (buf) {
+			buf->vb.vb2_buf.timestamp = vi->sof_ts;
+			buf->vb.sequence = vi->frames - 1;
+			buf->vb.field = V4L2_FIELD_NONE;
+			if (vi->errors)
+				state = VB2_BUF_STATE_ERROR;
+			vi->errors = 0;
+		}
+		/*
+		 * Arm first: vb2_buffer_done() syncs the cache of the buffer,
+		 * which can take longer than the vertical blanking.
+		 */
+		cv1800_vi_arm_next(vi);
+		spin_unlock(&vi->qlock);
+		if (buf)
+			vb2_buffer_done(&buf->vb.vb2_buf, state);
+	}
 
-	spin_lock(&vi->qlock);
-	buf = vi->active;
-	vi->active = NULL;
-	if (buf) {
+	if (sof) {
 		/* The bridge counts every input frame, armed or not */
 		vs = FIELD_GET(BDG_CH0_VS_CNT, vi_read(vi, BDG_CH0_DEBUG_2));
 		vi->frames += (u16)(vs - vi->last_vs);
 		vi->last_vs = vs;
-		buf->vb.vb2_buf.timestamp = vi->sof_ts;
-		buf->vb.sequence = vi->frames - 1;
-		buf->vb.field = V4L2_FIELD_NONE;
-		vb2_buffer_done(&buf->vb.vb2_buf, vi->errors ?
-				VB2_BUF_STATE_ERROR : VB2_BUF_STATE_DONE);
-		vi->errors = 0;
-	}
-	if (vi->running)
-		cv1800_vi_arm_next(vi);
-	spin_unlock(&vi->qlock);
-
-out:
-	if (sof)
 		vi->sof_ts = sof;
+
+		/* A started frame has latched its DMA address: arm the next one */
+		spin_lock(&vi->qlock);
+		cv1800_vi_arm_next(vi);
+		spin_unlock(&vi->qlock);
+	}
 
 	return IRQ_HANDLED;
 }
@@ -1077,8 +1123,7 @@ static void cv1800_vi_buf_queue(struct vb2_buffer *vb)
 
 	spin_lock_irqsave(&vi->qlock, flags);
 	list_add_tail(&buf->list, &vi->buffers);
-	if (vi->running && !vi->active)
-		cv1800_vi_arm_next(vi);
+	cv1800_vi_arm_next(vi);
 	spin_unlock_irqrestore(&vi->qlock, flags);
 }
 
@@ -1089,10 +1134,7 @@ static void cv1800_vi_return_buffers(struct cv1800_vi *vi,
 	unsigned long flags;
 
 	spin_lock_irqsave(&vi->qlock, flags);
-	if (vi->active) {
-		list_add(&vi->active->list, &vi->buffers);
-		vi->active = NULL;
-	}
+	cv1800_vi_requeue(vi);
 	list_for_each_entry_safe(buf, tmp, &vi->buffers, list) {
 		list_del(&buf->list);
 		vb2_buffer_done(&buf->vb.vb2_buf, state);
@@ -1173,14 +1215,10 @@ static void cv1800_vi_recover(struct work_struct *work)
 	cv1800_vi_hw_setup(vi, vi->pattern);
 
 	spin_lock_irqsave(&vi->qlock, flags);
-	/* Arm the interrupted buffer again; it was never completed */
-	if (vi->active) {
-		list_add(&vi->active->list, &vi->buffers);
-		vi->active = NULL;
-	}
+	/* Arm the interrupted buffers again; they were never completed */
+	cv1800_vi_requeue(vi);
 	vi->skip = skip_frames;
-	if (vi->running)
-		cv1800_vi_arm_next(vi);
+	cv1800_vi_arm_next(vi);
 	vi->recoveries++;
 	spin_unlock_irqrestore(&vi->qlock, flags);
 
