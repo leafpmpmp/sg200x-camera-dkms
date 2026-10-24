@@ -235,6 +235,27 @@ static const struct imx708_mode imx708_modes[] = {
 		.exposure_step = 2,
 		.regs = imx708_binned_regs,
 		.num_regs = ARRAY_SIZE(imx708_binned_regs),
+	}, {
+		/*
+		 * 4:3: bin a centred 3456x2592 window 2x2. The narrower lines
+		 * take less time on the 2-lane link: lines of 6400 give up to
+		 * 68.5 fps (at 5800, no frames arrive).
+		 */
+		.width = 1728,
+		.height = 1296,
+		.crop = {
+			.left = 16 + (4608 - 3456) / 2,
+			.top = 24,
+			.width = 3456,
+			.height = 2592,
+		},
+		.line_length = 6400,
+		.pixel_rate = 585600000,
+		.vblank_min = 40,
+		.exposure_min = 4,
+		.exposure_step = 2,
+		.regs = imx708_binned_regs,
+		.num_regs = ARRAY_SIZE(imx708_binned_regs),
 	},
 };
 
