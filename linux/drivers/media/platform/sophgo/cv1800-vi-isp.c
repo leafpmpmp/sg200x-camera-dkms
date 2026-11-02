@@ -7,9 +7,9 @@
  * YUV stages, which write 4:2:0 YUV to the capture buffer. The vendor
  * driver uses this "offline back end" mode for two sensors.
  *
- * Active stages: black level, white balance gains, demosaic, gamma, and
- * the BT.601 RGB to YUV matrix. Everything else is off: lens shading,
- * colour matrix, noise reduction, sharpening, tone mapping and all
+ * Active stages: black level, white balance gains, demosaic, colour
+ * matrix, gamma, and the BT.601 RGB to YUV matrix. Everything else is off:
+ * lens shading, noise reduction, sharpening, tone mapping and all
  * statistics.
  *
  * The register sequence follows the vendor's GPL kernel driver (vi_drv.c,
@@ -25,6 +25,7 @@
 #include "cv1800-vi-isp-regs.h"
 
 #define CV1800_ISP_CID_BLACK_LEVEL	(V4L2_CID_USER_BASE | 0x1000)
+#define CV1800_ISP_CID_CCM		(V4L2_CID_USER_BASE | 0x1001)
 
 /* Front end frames to wait for a busy ISP before resetting the VI */
 #define CV1800_ISP_TIMEOUT_FRAMES	3
@@ -178,6 +179,7 @@ static void cv1800_isp_apply_params(struct cv1800_vi *vi)
 {
 	const struct cv1800_isp_params *p = &vi->isp.params;
 	u32 bl = p->black_level, gain, v;
+	unsigned int i;
 
 	if (bl) {
 		/* Stretch what is left above the black level to full scale */
@@ -199,6 +201,10 @@ static void cv1800_isp_apply_params(struct cv1800_vi *vi)
 		 FIELD_PREP(WBG_GGAIN, 1024));
 	vi_update(vi, WBG_5(ISP_WBG0), WBG_BGAIN,
 		  FIELD_PREP(WBG_BGAIN, p->blue_gain));
+
+	/* s3.10, two's complement in 14 bits */
+	for (i = 0; i < ARRAY_SIZE(p->ccm); i++)
+		vi_write(vi, CCM_COEF(ISP_CCM0, i), (u16)p->ccm[i] & GENMASK(13, 0));
 
 	vi_update(vi, GAMMA_CTRL, GAMMA_ENABLE, p->gamma ? GAMMA_ENABLE : 0);
 }
@@ -306,17 +312,9 @@ void cv1800_isp_hw_setup(struct cv1800_vi *vi)
 	vi_update(vi, HIST_V_DMI_ENABLE, DMI_ENABLE | DMI_FORCE_DMA_DISABLE,
 		  DMI_FORCE_DMA_DISABLE);
 
-	/* Colour matrix off, but loaded with the identity */
-	vi_write(vi, CCM_COEF(ISP_CCM0, 0), 1024);
-	vi_write(vi, CCM_COEF(ISP_CCM0, 1), 0);
-	vi_write(vi, CCM_COEF(ISP_CCM0, 2), 0);
-	vi_write(vi, CCM_COEF(ISP_CCM0, 3), 0);
-	vi_write(vi, CCM_COEF(ISP_CCM0, 4), 1024);
-	vi_write(vi, CCM_COEF(ISP_CCM0, 5), 0);
-	vi_write(vi, CCM_COEF(ISP_CCM0, 6), 0);
-	vi_write(vi, CCM_COEF(ISP_CCM0, 7), 0);
-	vi_write(vi, CCM_COEF(ISP_CCM0, 8), 1024);
-	vi_update(vi, CCM_CTRL(ISP_CCM0), CCM_SHDW_SEL | CCM_ENABLE, CCM_SHDW_SEL);
+	/* CCM0 takes the colour matrix control, in cv1800_isp_apply_params() */
+	vi_update(vi, CCM_CTRL(ISP_CCM0), CCM_SHDW_SEL | CCM_ENABLE,
+		  CCM_SHDW_SEL | CCM_ENABLE);
 	vi_clear(vi, CCM_CTRL(ISP_CCM1), CCM_ENABLE);
 
 	vi_clear(vi, DHZ_BYPASS, DEHAZE_ENABLE);
@@ -659,6 +657,7 @@ static int cv1800_isp_s_ctrl(struct v4l2_ctrl *ctrl)
 					    isp.ctrls);
 	struct cv1800_isp_params *p = &vi->isp.params;
 	unsigned long flags;
+	unsigned int i;
 
 	spin_lock_irqsave(&vi->qlock, flags);
 	switch (ctrl->id) {
@@ -674,6 +673,10 @@ static int cv1800_isp_s_ctrl(struct v4l2_ctrl *ctrl)
 	case CV1800_ISP_CID_BLACK_LEVEL:
 		p->black_level = ctrl->val;
 		break;
+	case CV1800_ISP_CID_CCM:
+		for (i = 0; i < ARRAY_SIZE(p->ccm); i++)
+			p->ccm[i] = ctrl->p_new.p_s32[i];
+		break;
 	}
 	/* The next trigger writes them, while the ISP is idle */
 	vi->isp.params_dirty = true;
@@ -684,6 +687,56 @@ static int cv1800_isp_s_ctrl(struct v4l2_ctrl *ctrl)
 
 static const struct v4l2_ctrl_ops cv1800_isp_ctrl_ops = {
 	.s_ctrl = cv1800_isp_s_ctrl,
+};
+
+/*
+ * The colour matrix: linear RGB after white balance and demosaic, rows R G B,
+ * 1024 = 1.0. The default is the identity, which an element-wide default
+ * cannot give.
+ */
+static void cv1800_isp_ccm_init(const struct v4l2_ctrl *ctrl, u32 from_idx,
+				union v4l2_ctrl_ptr ptr)
+{
+	u32 i;
+
+	for (i = from_idx; i < ctrl->elems; i++)
+		ptr.p_s32[i] = i % 4 ? 0 : 1024;
+}
+
+static void cv1800_isp_ccm_minimum(const struct v4l2_ctrl *ctrl, u32 idx,
+				   union v4l2_ctrl_ptr ptr)
+{
+	for (; idx < ctrl->elems; idx++)
+		ptr.p_s32[idx] = ctrl->minimum;
+}
+
+static void cv1800_isp_ccm_maximum(const struct v4l2_ctrl *ctrl, u32 idx,
+				   union v4l2_ctrl_ptr ptr)
+{
+	for (; idx < ctrl->elems; idx++)
+		ptr.p_s32[idx] = ctrl->maximum;
+}
+
+static const struct v4l2_ctrl_type_ops cv1800_isp_ccm_type_ops = {
+	.equal = v4l2_ctrl_type_op_equal,
+	.init = cv1800_isp_ccm_init,
+	.minimum = cv1800_isp_ccm_minimum,
+	.maximum = cv1800_isp_ccm_maximum,
+	.log = v4l2_ctrl_type_op_log,
+	.validate = v4l2_ctrl_type_op_validate,
+};
+
+static const struct v4l2_ctrl_config cv1800_isp_ccm = {
+	.ops = &cv1800_isp_ctrl_ops,
+	.type_ops = &cv1800_isp_ccm_type_ops,
+	.id = CV1800_ISP_CID_CCM,
+	.name = "Colour Correction Matrix",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.min = -8192,
+	.max = 8191,
+	.step = 1,
+	.def = 0,
+	.dims = { 3, 3 },
 };
 
 static const struct v4l2_ctrl_config cv1800_isp_black_level = {
@@ -972,7 +1025,7 @@ static int cv1800_isp_init_ctrls(struct cv1800_vi *vi)
 	struct cv1800_isp *isp = &vi->isp;
 	struct v4l2_ctrl_handler *hdl = &isp->ctrls;
 
-	v4l2_ctrl_handler_init(hdl, 4);
+	v4l2_ctrl_handler_init(hdl, 5);
 	isp->red_gain = v4l2_ctrl_new_std(hdl, &cv1800_isp_ctrl_ops,
 					  V4L2_CID_RED_BALANCE, 0, 16383, 1, 1024);
 	isp->blue_gain = v4l2_ctrl_new_std(hdl, &cv1800_isp_ctrl_ops,
@@ -981,6 +1034,7 @@ static int cv1800_isp_init_ctrls(struct cv1800_vi *vi)
 	isp->gamma = v4l2_ctrl_new_std(hdl, &cv1800_isp_ctrl_ops,
 				       V4L2_CID_GAMMA, 0, 1, 1, 1);
 	isp->black_level = v4l2_ctrl_new_custom(hdl, &cv1800_isp_black_level, NULL);
+	isp->ccm = v4l2_ctrl_new_custom(hdl, &cv1800_isp_ccm, NULL);
 	if (hdl->error)
 		return hdl->error;
 
