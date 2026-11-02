@@ -278,8 +278,6 @@ struct cv1800_isp {
 	void *raw_cookie;
 	dma_addr_t raw_dma;
 	size_t raw_size;
-	u32 csc_default[6];		/* REG_4..REG_9 after reset */
-	bool csc_saved;
 
 	/* Protected by cv1800_vi.qlock */
 	struct list_head out;		/* queued output buffers */

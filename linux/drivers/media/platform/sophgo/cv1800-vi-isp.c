@@ -8,9 +8,9 @@
  * driver uses this "offline back end" mode for two sensors.
  *
  * Active stages: black level, white balance gains, demosaic, gamma, and
- * the RGB to YUV matrix at its reset value. Everything else is off: lens
- * shading, colour matrix, noise reduction, sharpening, tone mapping and
- * all statistics.
+ * the BT.601 RGB to YUV matrix. Everything else is off: lens shading,
+ * colour matrix, noise reduction, sharpening, tone mapping and all
+ * statistics.
  *
  * The register sequence follows the vendor's GPL kernel driver (vi_drv.c,
  * vi_subsys_ctrl.c and the vi_*_ip_ctrl.c files of osdrv/interdrv/vi in
@@ -133,38 +133,34 @@ static void cv1800_isp_load_gamma(struct cv1800_vi *vi)
 }
 
 /*
- * Keep the reset matrix of the RGB to YUV stage, and swap its chroma rows
- * for the other chroma order. REG_4..REG_9 hold, in this order: c00 c01,
- * c02 c10, c11 c12, c20 c21, c22 offset0, offset1 offset2. The reset
- * values are read once, so that no stream sees an earlier swap.
+ * BT.601 RGB to YUV, rows Y, Cb, Cr, 1024 = 1.0. The offsets are in 10-bit
+ * units. The full-range matrix is the reset value of the stage.
  */
-static void cv1800_isp_setup_csc(struct cv1800_vi *vi, bool swap_uv)
+static const s16 cv1800_isp_csc_full[9] = {
+	306, 601, 117, -173, -339, 512, 512, -429, -83,
+};
+
+static const s16 cv1800_isp_csc_lim[9] = {
+	263, 516, 100, -152, -298, 450, 450, -377, -73,
+};
+
+/*
+ * REG_4..REG_9 hold, in this order: c00 c01, c02 c10, c11 c12, c20 c21,
+ * c22 offset0, offset1 offset2. The other chroma order swaps the chroma
+ * rows.
+ */
+static void cv1800_isp_setup_csc(struct cv1800_vi *vi, bool swap_uv, bool full)
 {
-	struct cv1800_isp *isp = &vi->isp;
-	u32 *r = isp->csc_default;
-	u32 c[9], o[3];
+	const s16 *m = full ? cv1800_isp_csc_full : cv1800_isp_csc_lim;
+	u32 c[9], o[3] = { full ? 0 : 64, 512, 512 };
 	unsigned int i;
 
-	if (!isp->csc_saved) {
-		for (i = 0; i < 6; i++)
-			r[i] = vi_read(vi, CSC_REG(i));
-		isp->csc_saved = true;
-	}
+	for (i = 0; i < 9; i++)
+		c[i] = (u16)m[i] & FIELD_MAX(CSC_LO14);
 
-	for (i = 0; i < 4; i++) {
-		c[2 * i] = FIELD_GET(CSC_LO14, r[i]);
-		c[2 * i + 1] = FIELD_GET(CSC_HI14, r[i]);
-	}
-	c[8] = FIELD_GET(CSC_LO14, r[4]);
-	o[0] = FIELD_GET(CSC_HI11, r[4]);
-	o[1] = FIELD_GET(CSC_LO11, r[5]);
-	o[2] = FIELD_GET(CSC_HI11, r[5]);
-
-	if (swap_uv) {
+	if (swap_uv)
 		for (i = 3; i < 6; i++)
 			swap(c[i], c[i + 3]);
-		swap(o[1], o[2]);
-	}
 
 	for (i = 0; i < 4; i++)
 		vi_write(vi, CSC_REG(i), FIELD_PREP(CSC_LO14, c[2 * i]) |
@@ -330,7 +326,8 @@ void cv1800_isp_hw_setup(struct cv1800_vi *vi)
 	vi_write(vi, RGBDITHER, RGB_DITHER_SHDW_SEL |
 		 FIELD_PREP(RGB_DITHER_WIDTHM1, w - 1) |
 		 FIELD_PREP(RGB_DITHER_HEIGHTM1, h - 1));
-	cv1800_isp_setup_csc(vi, fmt && fmt->swap_uv);
+	cv1800_isp_setup_csc(vi, fmt && fmt->swap_uv,
+			     isp->pix.quantization == V4L2_QUANTIZATION_FULL_RANGE);
 
 	vi_update(vi, MMAP_REG_00, MMAP_0_ENABLE | MMAP_1_ENABLE | MMAP_BYPASS,
 		  MMAP_BYPASS);
@@ -635,16 +632,21 @@ void cv1800_isp_unprepare(struct cv1800_vi *vi)
 void cv1800_isp_status_show(struct cv1800_vi *vi, struct seq_file *s, bool hw)
 {
 	struct cv1800_isp *isp = &vi->isp;
-	const u32 *c = isp->csc_default;
 
 	seq_printf(s, "isp triggers %u, done %u, dropped %u, stalls %u%s\n",
 		   isp->triggers, isp->done, isp->dropped, isp->timeouts,
 		   isp->busy ? ", busy" : "");
 	seq_printf(s, "isp events seen    ev0 %08x\n", isp->ev0_seen);
-	if (hw)
-		seq_printf(s, "isp block idle     %08x\n", vi_read(vi, TOP_BLK_IDLE));
-	seq_printf(s, "csc after reset    %08x %08x %08x %08x %08x %08x\n",
-		   c[0], c[1], c[2], c[3], c[4], c[5]);
+	seq_printf(s, "isp output         %s range\n",
+		   isp->pix.quantization == V4L2_QUANTIZATION_FULL_RANGE ?
+		   "full" : "limited");
+	if (!hw)
+		return;
+	seq_printf(s, "isp block idle     %08x\n", vi_read(vi, TOP_BLK_IDLE));
+	seq_printf(s, "csc                %08x %08x %08x %08x %08x %08x\n",
+		   vi_read(vi, CSC_REG(0)), vi_read(vi, CSC_REG(1)),
+		   vi_read(vi, CSC_REG(2)), vi_read(vi, CSC_REG(3)),
+		   vi_read(vi, CSC_REG(4)), vi_read(vi, CSC_REG(5)));
 }
 
 /* -----------------------------------------------------------------------------
@@ -731,8 +733,12 @@ static void cv1800_isp_try_pix(struct v4l2_pix_format *pix)
 	pix->field = V4L2_FIELD_NONE;
 	pix->colorspace = V4L2_COLORSPACE_SRGB;
 	pix->ycbcr_enc = V4L2_YCBCR_ENC_601;
-	pix->quantization = V4L2_QUANTIZATION_LIM_RANGE;
 	pix->xfer_func = V4L2_XFER_FUNC_SRGB;
+	/* Limited range, unless the application asks for full range */
+	if (!(pix->flags & V4L2_PIX_FMT_FLAG_SET_CSC) ||
+	    pix->quantization != V4L2_QUANTIZATION_FULL_RANGE)
+		pix->quantization = V4L2_QUANTIZATION_LIM_RANGE;
+	pix->flags &= V4L2_PIX_FMT_FLAG_SET_CSC;
 }
 
 static int cv1800_isp_querycap(struct file *file, void *priv,
@@ -752,6 +758,7 @@ static int cv1800_isp_enum_fmt(struct file *file, void *priv,
 	if (f->index >= ARRAY_SIZE(cv1800_isp_formats))
 		return -EINVAL;
 	f->pixelformat = cv1800_isp_formats[f->index].fourcc;
+	f->flags = V4L2_FMT_FLAG_CSC_QUANTIZATION;
 
 	return 0;
 }
