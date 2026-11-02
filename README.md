@@ -77,11 +77,14 @@ Without the package, `make KDIR=/path/to/kernel/build` builds the modules, and
 - **YUV frames from the ISP**: `tools/stream-yuv.sh [width height] [frames]`
   sets up the same pipeline and captures from `cv1800-vi-yuv` to `cap.yuv`
   (or `$OUT`), as NV21 (or `FMT=NV12`). `PATTERN=1` sends the bridge's colour
-  bars through the ISP instead of the sensor image. The node has five
+  bars through the ISP instead of the sensor image. The node has these
   controls: `red_balance` and `blue_balance` (white balance gains, 1024 =
   1.0), `black_level` (12-bit units, 0 = off; 252 for the GC2083), `gamma`
-  (1 = sRGB curve, 0 = linear) and `colour_correction_matrix` (3x3, rows
-  R G B, 1024 = 1.0, default identity). Convert a frame on a PC with
+  (1 = sRGB curve, 0 = linear), `colour_correction_matrix` (3x3, rows
+  R G B, 1024 = 1.0, default identity), and `noise_reduction_raw`,
+  `noise_reduction_luma`, `noise_reduction_chroma` (0-255, 0 = off, the
+  default). All take effect at the next frame, also while streaming.
+  Convert a frame on a PC with
   `ffmpeg -f rawvideo -pix_fmt nv21 -s 1920x1080 -i cap.yuv -frames 1 cap.png`.
   See "The ISP path" below.
 - **libcamera**: its simple pipeline handler and software ISP turn the camera
@@ -158,9 +161,14 @@ the capture buffer as 4:2:0 YUV. The vendor stack calls this the offline back
 end mode. The register sequence follows the vendor's GPL kernel driver
 (`osdrv/interdrv/vi` in Milk-V's duo-buildroot-sdk-v2).
 
-What runs: black level, white balance gains, demosaic, the colour matrix,
-the sRGB gamma curve, and the BT.601 RGB to YUV matrix. What does not: lens
-shading, defect pixel correction, noise reduction, sharpening,
+What runs: black level, Bayer noise reduction, white balance gains, demosaic,
+the colour matrix, the sRGB gamma curve, the BT.601 RGB to YUV matrix, and
+luma and chroma noise reduction. The noise reduction stages are off until
+an application sets a strength. On the GC2083, luma noise reduction does
+most of the work: 10 suits a gain of about 20x, and above 20 the picture
+goes soft. The Bayer stage blurs the picture at the vendor's defaults.
+What does not run: lens shading, defect pixel correction, temporal noise
+reduction, sharpening,
 tone mapping, and all statistics. Nothing sets the gains automatically yet:
 an application measures the image and sets the controls.
 

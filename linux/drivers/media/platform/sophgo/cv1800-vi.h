@@ -261,6 +261,9 @@ struct cv1800_isp_params {
 	u16 black_level;		/* in 12-bit units */
 	bool gamma;
 	s16 ccm[9];			/* colour matrix, rows R G B, 1024 = 1.0 */
+	u8 nr_raw;			/* noise reduction strengths, 0 = off */
+	u8 nr_luma;
+	u8 nr_chroma;
 };
 
 struct cv1800_isp {
@@ -274,6 +277,9 @@ struct cv1800_isp {
 	struct v4l2_ctrl *black_level;
 	struct v4l2_ctrl *gamma;
 	struct v4l2_ctrl *ccm;
+	struct v4l2_ctrl *nr_raw;
+	struct v4l2_ctrl *nr_luma;
+	struct v4l2_ctrl *nr_chroma;
 
 	struct cv1800_vi_frame raw[CV1800_ISP_NUM_RAW];
 	struct list_head raw_free;	/* protected by cv1800_vi.qlock */

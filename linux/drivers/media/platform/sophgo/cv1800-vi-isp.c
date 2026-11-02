@@ -7,10 +7,12 @@
  * YUV stages, which write 4:2:0 YUV to the capture buffer. The vendor
  * driver uses this "offline back end" mode for two sensors.
  *
- * Active stages: black level, white balance gains, demosaic, colour
- * matrix, gamma, and the BT.601 RGB to YUV matrix. Everything else is off:
- * lens shading, noise reduction, sharpening, tone mapping and all
- * statistics.
+ * Active stages: black level, Bayer noise reduction, white balance gains,
+ * demosaic, colour matrix, gamma, the BT.601 RGB to YUV matrix, and luma
+ * and chroma noise reduction. The noise reduction stages are off until an
+ * application sets a strength. Everything else is off: lens shading,
+ * defect pixel correction, temporal noise reduction, sharpening, tone
+ * mapping and all statistics.
  *
  * The register sequence follows the vendor's GPL kernel driver (vi_drv.c,
  * vi_subsys_ctrl.c and the vi_*_ip_ctrl.c files of osdrv/interdrv/vi in
@@ -26,6 +28,9 @@
 
 #define CV1800_ISP_CID_BLACK_LEVEL	(V4L2_CID_USER_BASE | 0x1000)
 #define CV1800_ISP_CID_CCM		(V4L2_CID_USER_BASE | 0x1001)
+#define CV1800_ISP_CID_NR_RAW		(V4L2_CID_USER_BASE | 0x1002)
+#define CV1800_ISP_CID_NR_LUMA		(V4L2_CID_USER_BASE | 0x1003)
+#define CV1800_ISP_CID_NR_CHROMA	(V4L2_CID_USER_BASE | 0x1004)
 
 /* Front end frames to wait for a busy ISP before resetting the VI */
 #define CV1800_ISP_TIMEOUT_FRAMES	3
@@ -174,6 +179,93 @@ static void cv1800_isp_setup_csc(struct cv1800_vi *vi, bool swap_uv, bool full)
 	vi_set(vi, CSC_REG_0, CSC_ENABLE);
 }
 
+/*
+ * The noise reduction stages, from the vendor's GPL kernel defaults. The
+ * strengths come with the other parameters. Bayer: a noise model per
+ * channel (R, Gr, Gb, B), and weights that fall with the difference to the
+ * centre pixel. Luma: one noise level for all brightness, the motion input
+ * unused (no temporal noise reduction).
+ */
+static void cv1800_isp_setup_nr(struct cv1800_vi *vi)
+{
+	static const u8 bnr_slope[4] = { 127, 106, 106, 135 };
+	static const u8 bnr_offset[4] = { 182, 169, 169, 177 };
+	static const u8 bnr_weight[] = { 31, 16, 8, 4, 2, 1, 1 };
+	static const u8 ynr_luma_th[6] = { 0, 16, 32, 64, 128, 255 };
+	static const u8 ynr_weight[] = { 31, 4 };
+	unsigned int i, p;
+
+	vi_write(vi, BNR_SHADOW_RD_SEL, 1);
+	vi_write(vi, BNR_INDEX_CLR, 1);
+	for (i = 0; i < 8; i++)
+		vi_write(vi, BNR_INTENSITY_SEL, 0);
+	for (i = 0; i < 256; i++)
+		vi_write(vi, BNR_WEIGHT_LUT,
+			 i < ARRAY_SIZE(bnr_weight) ? bnr_weight[i] : 0);
+	for (i = 0; i < 4; i++) {
+		vi_write(vi, BNR_NS_LUMA_TH(i), 160);
+		vi_write(vi, BNR_NS_SLOPE(i), bnr_slope[i]);
+		vi_write(vi, BNR_NS_OFFSET0(i), bnr_offset[i]);
+		vi_write(vi, BNR_NS_OFFSET1(i), 1023);
+	}
+	vi_write(vi, BNR_NS_GAIN, 0);
+	for (i = 0; i < 3; i++)
+		vi_write(vi, BNR_WEIGHT_INTRA(i), 6);
+	vi_write(vi, BNR_WEIGHT_NORM_1, 7);
+	vi_write(vi, BNR_WEIGHT_NORM_2, 5);
+	vi_write(vi, BNR_VAR_TH, 128);
+	for (i = 0; i < 5; i++)
+		vi_write(vi, BNR_WEIGHT_DIR(i), 0);
+	vi_write(vi, BNR_NEIGHBOR_MAX, 1);
+	vi_write(vi, BNR_RES_K_SMOOTH, 0);
+	vi_write(vi, BNR_RES_K_TEXTURE, 0);
+
+	vi_write(vi, YNR_INDEX_CLR, 1);
+	for (i = 0; i < 64; i++)
+		vi_write(vi, YNR_WEIGHT_LUT,
+			 i < ARRAY_SIZE(ynr_weight) ? ynr_weight[i] : 0);
+	for (p = 0; p < 2; p++) {
+		for (i = 0; i < 6; i++) {
+			vi_write(vi, YNR_NS_LUMA_TH(p, i), ynr_luma_th[i]);
+			vi_write(vi, YNR_NS_OFFSET(p, i), 255);
+		}
+		for (i = 0; i < 5; i++)
+			vi_write(vi, YNR_NS_SLOPE(p, i), 0);
+	}
+	for (i = 0; i < 16; i++)
+		vi_write(vi, YNR_MOTION_LUT(i), 0);
+	vi_write(vi, YNR_WEIGHT_INTRA(0), 6);
+	vi_write(vi, YNR_WEIGHT_INTRA(1), 1);
+	vi_write(vi, YNR_WEIGHT_INTRA(2), 0);
+	vi_write(vi, YNR_WEIGHT_NORM_1, 51);
+	vi_write(vi, YNR_WEIGHT_NORM_2, 85);
+	vi_write(vi, YNR_ALPHA_GAIN, 256);
+	vi_write(vi, YNR_VAR_TH, 64);
+	for (i = 0; i < 5; i++)
+		vi_write(vi, YNR_WEIGHT_DIR(i), 0);
+	vi_write(vi, YNR_NEIGHBOR_MAX, 0);
+	vi_write(vi, YNR_RES_K_SMOOTH, 128);
+	vi_write(vi, YNR_RES_K_TEXTURE, 128);
+	vi_write(vi, YNR_FILTER_MODE_EN, 0);
+	vi_write(vi, YNR_FILTER_MODE_ALPHA, 128);
+
+	/* The chroma lookup tables keep their reset values */
+	vi_update(vi, CNR_ENABLE_REG, CNR_ENABLE | CNR_PFC_ENABLE |
+		  CNR_DIFF_SHIFT_VAL | CNR_RATIO | CNR_OUT_SEL,
+		  FIELD_PREP(CNR_DIFF_SHIFT_VAL, 255));
+	vi_update(vi, CNR_STRENGTH_REG, CNR_NEIGHBOR_MAX_WEIGHT,
+		  CNR_NEIGHBOR_MAX_WEIGHT);
+	vi_update(vi, CNR_PURPLE_TH_REG, CNR_PURPLE_TH | CNR_CORRECT_STRENGTH |
+		  CNR_DIFF_GAIN | CNR_MOTION_ENABLE,
+		  FIELD_PREP(CNR_PURPLE_TH, 85) |
+		  FIELD_PREP(CNR_CORRECT_STRENGTH, 96) |
+		  FIELD_PREP(CNR_DIFF_GAIN, 4));
+	vi_update(vi, CNR_EDGE_SCALE_REG, CNR_EDGE_SCALE,
+		  FIELD_PREP(CNR_EDGE_SCALE, 12));
+	vi_update(vi, CNR_EDGE_RATIO_SPEED, CNR_CB_STR | CNR_CR_STR,
+		  FIELD_PREP(CNR_CB_STR, 8) | FIELD_PREP(CNR_CR_STR, 8));
+}
+
 /* Called with qlock held, or before the stream runs, while the ISP is idle */
 static void cv1800_isp_apply_params(struct cv1800_vi *vi)
 {
@@ -205,6 +297,15 @@ static void cv1800_isp_apply_params(struct cv1800_vi *vi)
 	/* s3.10, two's complement in 14 bits */
 	for (i = 0; i < ARRAY_SIZE(p->ccm); i++)
 		vi_write(vi, CCM_COEF(ISP_CCM0, i), (u16)p->ccm[i] & GENMASK(13, 0));
+
+	/* Noise reduction: strength 0 bypasses the stage */
+	vi_write(vi, BNR_STRENGTH_MODE, p->nr_raw);
+	vi_write(vi, BNR_OUT_SEL, p->nr_raw ? BNR_OUT_B_OUT : BNR_OUT_B_DELAY);
+	vi_write(vi, YNR_NS_GAIN, p->nr_luma);
+	vi_write(vi, YNR_OUT_SEL, p->nr_luma ? YNR_OUT_Y_OUT : YNR_OUT_Y_DELAY);
+	vi_update(vi, CNR_STRENGTH_REG, CNR_STRENGTH_MODE,
+		  FIELD_PREP(CNR_STRENGTH_MODE, p->nr_chroma));
+	vi_update(vi, CNR_ENABLE_REG, CNR_ENABLE, p->nr_chroma ? CNR_ENABLE : 0);
 
 	vi_update(vi, GAMMA_CTRL, GAMMA_ENABLE, p->gamma ? GAMMA_ENABLE : 0);
 }
@@ -276,7 +377,6 @@ void cv1800_isp_hw_setup(struct cv1800_vi *vi)
 		 FIELD_PREP(GENMASK(31, 16), h - 1));
 	vi_write(vi, RAW_RDMA_DPCM_MODE, 0);
 
-	vi_write(vi, BNR_OUT_SEL, BNR_OUT_B_DELAY);
 	vi_clear(vi, LSC_ENABLE_REG, LSC_ENABLE);
 	vi_clear(vi, STS_DMI_ENABLE(ISP_LSC), DMI_ENABLE);
 	vi_clear(vi, LSC_BLD, LSC_BLDRATIO_ENABLE);
@@ -353,8 +453,7 @@ void cv1800_isp_hw_setup(struct cv1800_vi *vi)
 	vi_clear(vi, YUV_DITHER_UV, YUV_DITHER_ENABLE);
 	vi_clear(vi, CA_REG_00, CACP_ENABLE);
 	vi_clear(vi, CA_LITE_REG_00, CA_LITE_ENABLE);
-	vi_write(vi, YNR_OUT_SEL, YNR_OUT_Y_DELAY);
-	vi_clear(vi, CNR_ENABLE_REG, CNR_ENABLE | CNR_PFC_ENABLE);
+	cv1800_isp_setup_nr(vi);
 	vi_clear(vi, EE_REG_00(ISP_PRE_EE), EE_ENABLE);
 	vi_clear(vi, EE_REG_00(ISP_EE), EE_ENABLE);
 	vi_clear(vi, YCUR_CTRL, YCUR_ENABLE);
@@ -673,6 +772,15 @@ static int cv1800_isp_s_ctrl(struct v4l2_ctrl *ctrl)
 	case CV1800_ISP_CID_BLACK_LEVEL:
 		p->black_level = ctrl->val;
 		break;
+	case CV1800_ISP_CID_NR_RAW:
+		p->nr_raw = ctrl->val;
+		break;
+	case CV1800_ISP_CID_NR_LUMA:
+		p->nr_luma = ctrl->val;
+		break;
+	case CV1800_ISP_CID_NR_CHROMA:
+		p->nr_chroma = ctrl->val;
+		break;
 	case CV1800_ISP_CID_CCM:
 		for (i = 0; i < ARRAY_SIZE(p->ccm); i++)
 			p->ccm[i] = ctrl->p_new.p_s32[i];
@@ -737,6 +845,24 @@ static const struct v4l2_ctrl_config cv1800_isp_ccm = {
 	.step = 1,
 	.def = 0,
 	.dims = { 3, 3 },
+};
+
+/* Noise reduction strengths, 0-255: Bayer, luma, chroma. 0 = off. */
+#define CV1800_ISP_NR_CTRL(_id, _name) {		\
+	.ops = &cv1800_isp_ctrl_ops,			\
+	.id = _id,					\
+	.name = _name,					\
+	.type = V4L2_CTRL_TYPE_INTEGER,			\
+	.min = 0,					\
+	.max = 255,					\
+	.step = 1,					\
+	.def = 0,					\
+}
+
+static const struct v4l2_ctrl_config cv1800_isp_nr[] = {
+	CV1800_ISP_NR_CTRL(CV1800_ISP_CID_NR_RAW, "Noise Reduction Raw"),
+	CV1800_ISP_NR_CTRL(CV1800_ISP_CID_NR_LUMA, "Noise Reduction Luma"),
+	CV1800_ISP_NR_CTRL(CV1800_ISP_CID_NR_CHROMA, "Noise Reduction Chroma"),
 };
 
 static const struct v4l2_ctrl_config cv1800_isp_black_level = {
@@ -1025,7 +1151,7 @@ static int cv1800_isp_init_ctrls(struct cv1800_vi *vi)
 	struct cv1800_isp *isp = &vi->isp;
 	struct v4l2_ctrl_handler *hdl = &isp->ctrls;
 
-	v4l2_ctrl_handler_init(hdl, 5);
+	v4l2_ctrl_handler_init(hdl, 8);
 	isp->red_gain = v4l2_ctrl_new_std(hdl, &cv1800_isp_ctrl_ops,
 					  V4L2_CID_RED_BALANCE, 0, 16383, 1, 1024);
 	isp->blue_gain = v4l2_ctrl_new_std(hdl, &cv1800_isp_ctrl_ops,
@@ -1035,6 +1161,9 @@ static int cv1800_isp_init_ctrls(struct cv1800_vi *vi)
 				       V4L2_CID_GAMMA, 0, 1, 1, 1);
 	isp->black_level = v4l2_ctrl_new_custom(hdl, &cv1800_isp_black_level, NULL);
 	isp->ccm = v4l2_ctrl_new_custom(hdl, &cv1800_isp_ccm, NULL);
+	isp->nr_raw = v4l2_ctrl_new_custom(hdl, &cv1800_isp_nr[0], NULL);
+	isp->nr_luma = v4l2_ctrl_new_custom(hdl, &cv1800_isp_nr[1], NULL);
+	isp->nr_chroma = v4l2_ctrl_new_custom(hdl, &cv1800_isp_nr[2], NULL);
 	if (hdl->error)
 		return hdl->error;
 

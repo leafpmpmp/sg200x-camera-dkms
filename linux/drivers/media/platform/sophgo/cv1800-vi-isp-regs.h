@@ -185,8 +185,28 @@
 #define RAW_RDMA_SIZE			(ISP_RAW_RDMA + 0x08)
 #define RAW_RDMA_DPCM_MODE		(ISP_RAW_RDMA + 0x0c)
 
-#define BNR_OUT_SEL			(ISP_BNR + 0x04)
-#define   BNR_OUT_B_DELAY		1
+/* Bayer noise reduction. Channels c: R, Gr, Gb, B. */
+#define BNR_SHADOW_RD_SEL		(ISP_BNR + 0x000)
+#define BNR_OUT_SEL			(ISP_BNR + 0x004)
+#define   BNR_OUT_B_DELAY		1	/* bypass */
+#define   BNR_OUT_B_OUT			8	/* filtered */
+#define BNR_INDEX_CLR			(ISP_BNR + 0x008)
+#define BNR_NS_LUMA_TH(c)		(ISP_BNR + 0x100 + 0x10 * (c))
+#define BNR_NS_SLOPE(c)			(ISP_BNR + 0x104 + 0x10 * (c))
+#define BNR_NS_OFFSET0(c)		(ISP_BNR + 0x108 + 0x10 * (c))
+#define BNR_NS_OFFSET1(c)		(ISP_BNR + 0x10c + 0x10 * (c))
+#define BNR_NS_GAIN			(ISP_BNR + 0x140)
+#define BNR_STRENGTH_MODE		(ISP_BNR + 0x144)
+#define BNR_INTENSITY_SEL		(ISP_BNR + 0x148)	/* 8 writes */
+#define BNR_WEIGHT_INTRA(i)		(ISP_BNR + 0x200 + 4 * (i))
+#define BNR_WEIGHT_NORM_1		(ISP_BNR + 0x210)
+#define BNR_WEIGHT_NORM_2		(ISP_BNR + 0x214)
+#define BNR_VAR_TH			(ISP_BNR + 0x224)
+#define BNR_WEIGHT_LUT			(ISP_BNR + 0x228)	/* 256 writes */
+#define BNR_WEIGHT_DIR(i)		(ISP_BNR + 0x22c + 4 * (i))	/* SM V H D45 D135 */
+#define BNR_NEIGHBOR_MAX		(ISP_BNR + 0x240)
+#define BNR_RES_K_SMOOTH		(ISP_BNR + 0x250)
+#define BNR_RES_K_TEXTURE		(ISP_BNR + 0x254)
 
 #define LSC_ENABLE_REG			(ISP_LSC + 0x0c)
 #define   LSC_ENABLE			BIT(0)
@@ -336,12 +356,50 @@
 #define CA_LITE_REG_00			(ISP_CA_LITE + 0x00)
 #define   CA_LITE_ENABLE		BIT(0)
 
-#define YNR_OUT_SEL			(ISP_YNR + 0x04)
-#define   YNR_OUT_Y_DELAY		1
+/* Luma noise reduction. Noise profiles p: 0, 1 (motion). */
+#define YNR_SHADOW_RD_SEL		(ISP_YNR + 0x000)
+#define YNR_OUT_SEL			(ISP_YNR + 0x004)
+#define   YNR_OUT_Y_DELAY		1	/* bypass */
+#define   YNR_OUT_Y_OUT			8	/* filtered */
+#define YNR_INDEX_CLR			(ISP_YNR + 0x008)
+#define YNR_NS_LUMA_TH(p, i)		(ISP_YNR + 0x00c + 0x44 * (p) + 4 * (i))
+#define YNR_NS_SLOPE(p, i)		(ISP_YNR + 0x024 + 0x44 * (p) + 4 * (i))
+#define YNR_NS_OFFSET(p, i)		(ISP_YNR + 0x038 + 0x44 * (p) + 4 * (i))
+#define YNR_NS_GAIN			(ISP_YNR + 0x094)
+#define YNR_MOTION_LUT(i)		(ISP_YNR + 0x098 + 4 * (i))
+#define YNR_WEIGHT_INTRA(i)		(ISP_YNR + 0x0d8 + 4 * (i))
+#define YNR_WEIGHT_NORM_1		(ISP_YNR + 0x0e4)
+#define YNR_WEIGHT_NORM_2		(ISP_YNR + 0x0e8)
+#define YNR_ALPHA_GAIN			(ISP_YNR + 0x0ec)
+#define YNR_VAR_TH			(ISP_YNR + 0x0f0)
+#define YNR_WEIGHT_DIR(i)		(ISP_YNR + 0x0f4 + 4 * (i))	/* SM V H D45 D135 */
+#define YNR_NEIGHBOR_MAX		(ISP_YNR + 0x108)
+#define YNR_RES_K_SMOOTH		(ISP_YNR + 0x10c)
+#define YNR_RES_K_TEXTURE		(ISP_YNR + 0x110)
+#define YNR_FILTER_MODE_EN		(ISP_YNR + 0x114)
+#define YNR_FILTER_MODE_ALPHA		(ISP_YNR + 0x118)
+#define YNR_WEIGHT_LUT			(ISP_YNR + 0x200)	/* 64 writes */
 
-#define CNR_ENABLE_REG			(ISP_CNR + 0x00)
+/* Chroma noise reduction */
+#define CNR_ENABLE_REG			(ISP_CNR + 0x000)
 #define   CNR_ENABLE			BIT(0)
 #define   CNR_PFC_ENABLE		BIT(4)
+#define   CNR_DIFF_SHIFT_VAL		GENMASK(15, 8)
+#define   CNR_RATIO			GENMASK(23, 16)
+#define   CNR_OUT_SEL			GENMASK(25, 24)
+#define CNR_STRENGTH_REG		(ISP_CNR + 0x004)
+#define   CNR_STRENGTH_MODE		GENMASK(7, 0)
+#define   CNR_NEIGHBOR_MAX_WEIGHT	BIT(30)
+#define CNR_PURPLE_TH_REG		(ISP_CNR + 0x008)
+#define   CNR_PURPLE_TH			GENMASK(7, 0)
+#define   CNR_CORRECT_STRENGTH		GENMASK(15, 8)
+#define   CNR_DIFF_GAIN			GENMASK(19, 16)
+#define   CNR_MOTION_ENABLE		BIT(24)
+#define CNR_EDGE_SCALE_REG		(ISP_CNR + 0x048)
+#define   CNR_EDGE_SCALE		GENMASK(7, 0)
+#define CNR_EDGE_RATIO_SPEED		(ISP_CNR + 0x04c)
+#define   CNR_CB_STR			GENMASK(12, 8)
+#define   CNR_CR_STR			GENMASK(20, 16)
 
 /* Edge enhancement: EE and PRE_EE share the layout */
 #define EE_REG_00(b)			((b) + 0x00)
