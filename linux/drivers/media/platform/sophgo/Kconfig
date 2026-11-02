@@ -20,7 +20,7 @@ config VIDEO_SOPHGO_CV1800_CSI2
 	  will be called cv1800-csi2.
 
 config VIDEO_SOPHGO_CV1800_VI
-	tristate "Sophgo CV1800/SG2000 video input raw capture"
+	tristate "Sophgo CV1800/SG2000 video input and ISP"
 	depends on V4L_PLATFORM_DRIVERS
 	depends on VIDEO_DEV && COMMON_CLK && RESET_CONTROLLER && OF && HAS_DMA
 	depends on ARCH_SOPHGO || COMPILE_TEST
@@ -31,8 +31,8 @@ config VIDEO_SOPHGO_CV1800_VI
 	select VIDEO_V4L2_SUBDEV_API
 	select VIDEOBUF2_DMA_CONTIG
 	help
-	  Raw Bayer capture through the video input (VI) block of Sophgo
-	  CV1800 and SG2000 SoCs. The ISP is not used.
+	  Capture through the video input (VI) block of Sophgo CV1800 and
+	  SG2000 SoCs: raw Bayer frames, or YUV frames from the ISP.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called cv1800-vi.

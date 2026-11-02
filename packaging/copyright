@@ -14,6 +14,11 @@ Files: linux/drivers/media/i2c/sg200x-camera/gc2083.c
 Copyright: 2026 Lukasz Sobala <lsobala1@gmail.com>
 License: GPL-2.0
 
+Files: linux/drivers/media/platform/sophgo/cv1800-vi-isp.c
+       linux/drivers/media/platform/sophgo/cv1800-vi-isp-regs.h
+Copyright: 2026 Lukasz Sobala <lsobala1@gmail.com>
+License: GPL-2.0
+
 Files: linux/Documentation/devicetree/bindings/media/i2c/sony,imx708.yaml
 Copyright: 2026 Raspberry Pi Ltd
            2026 Ideas on Board Oy
