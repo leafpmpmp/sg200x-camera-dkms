@@ -46,9 +46,11 @@ camera in `/boot/armbianEnv.txt` and reboot:
 ## Install
 
 Build the package for the board's architecture. The Linux tree only provides
-the device tree headers the overlay includes:
+the dt-bindings headers the overlay includes. A kernel source tree or a kernel
+headers directory works:
 
     scripts/build-deb.sh riscv64 /path/to/linux    # or arm64
+    scripts/build-deb.sh arm64 /usr/src/linux-headers-$(uname -r)    # on the board
 
 On the board, install the kernel headers first, then the package. DKMS builds
 the modules and rebuilds them for every kernel installed later:

@@ -19,6 +19,10 @@ Files: linux/drivers/media/platform/sophgo/cv1800-vi-isp.c
 Copyright: 2026 Lukasz Sobala <lsobala1@gmail.com>
 License: GPL-2.0
 
+Files: scripts/include/cv18xx-reset.h
+Copyright: 2025 Inochi Amaoto <inochiama@outlook.com>
+License: GPL-2.0 or MIT
+
 Files: linux/Documentation/devicetree/bindings/media/i2c/sony,imx708.yaml
 Copyright: 2026 Raspberry Pi Ltd
            2026 Ideas on Board Oy
