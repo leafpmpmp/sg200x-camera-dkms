@@ -29,6 +29,7 @@
 #include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
+#include <linux/version.h>
 
 #include <media/mipi-csi2.h>
 #include <media/v4l2-async.h>
@@ -552,6 +553,9 @@ static int cv1800_csi2_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int cv1800_csi2_set_fmt(struct v4l2_subdev *sd,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
+			       const struct v4l2_subdev_client_info *ci,
+#endif
 			       struct v4l2_subdev_state *state,
 			       struct v4l2_subdev_format *format)
 {

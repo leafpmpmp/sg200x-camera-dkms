@@ -32,6 +32,7 @@
 #include <linux/property.h>
 #include <linux/regulator/consumer.h>
 #include <linux/types.h>
+#include <linux/version.h>
 
 #include <media/v4l2-cci.h>
 #include <media/v4l2-ctrls.h>
@@ -718,6 +719,9 @@ static int gc2083_update_controls(struct gc2083 *gc2083,
 }
 
 static int gc2083_set_format(struct v4l2_subdev *sd,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
+			     const struct v4l2_subdev_client_info *ci,
+#endif
 			     struct v4l2_subdev_state *state,
 			     struct v4l2_subdev_format *fmt)
 {
@@ -749,6 +753,9 @@ static int gc2083_set_format(struct v4l2_subdev *sd,
 }
 
 static int gc2083_get_selection(struct v4l2_subdev *sd,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
+				const struct v4l2_subdev_client_info *ci,
+#endif
 				struct v4l2_subdev_state *state,
 				struct v4l2_subdev_selection *sel)
 {
@@ -784,7 +791,11 @@ static int gc2083_init_state(struct v4l2_subdev *sd,
 		},
 	};
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
+	return gc2083_set_format(sd, NULL, state, &fmt);
+#else
 	return gc2083_set_format(sd, state, &fmt);
+#endif
 }
 
 static int gc2083_start_streaming(struct gc2083 *gc2083)

@@ -26,6 +26,7 @@
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/seq_file.h>
+#include <linux/version.h>
 
 #include <media/media-device.h>
 #include <media/v4l2-async.h>
