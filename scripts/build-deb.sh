@@ -7,15 +7,20 @@
 #
 # The Linux tree is only needed for the dt-bindings headers the overlays
 # include. A kernel headers package has them, for example
-# /usr/src/linux-headers-$(uname -r) on the board. Needs cpp, dtc and dpkg-deb; without dpkg-deb on the host, it is
-# run in a Debian container if docker is available. MAINTAINER overrides the
-# git identity written into the package.
+# /usr/src/linux-headers-$(uname -r) on the board. Needs cpp, dtc and
+# dpkg-deb; without dpkg-deb on the host, it is run in a Debian container if
+# docker is available. MAINTAINER overrides the git identity written into the
+# package. Without a git identity, the user and host name are used.
 set -e
 ARCH=${1:?usage: $0 riscv64|arm64 <linux source tree>}
 KSRC=${2:?usage: $0 riscv64|arm64 <linux source tree>}
 TOP=$(cd "$(dirname "$0")/.." && pwd)
 VERSION=$(sed -n 's/^PACKAGE_VERSION="\(.*\)"$/\1/p' "$TOP/dkms.conf")
-MAINTAINER=${MAINTAINER:-"$(git -C "$TOP" config user.name) <$(git -C "$TOP" config user.email)>"}
+if [ -z "$MAINTAINER" ]; then
+	name=$(git -C "$TOP" config user.name 2>/dev/null || id -un)
+	email=$(git -C "$TOP" config user.email 2>/dev/null || echo "$(id -un)@$(uname -n)")
+	MAINTAINER="$name <$email>"
+fi
 case $ARCH in
 	riscv64) DTARCH=riscv ;;
 	arm64) DTARCH=arm64 ;;
