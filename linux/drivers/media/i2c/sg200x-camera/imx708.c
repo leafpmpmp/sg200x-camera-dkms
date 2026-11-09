@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
+#include <linux/version.h>
 #include <media/media-entity.h>
 #include <media/v4l2-async.h>
 #include <media/v4l2-cci.h>
@@ -703,6 +704,9 @@ static int imx708_init_state(struct v4l2_subdev *sd,
 }
 
 static int imx708_get_selection(struct v4l2_subdev *sd,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
+				const struct v4l2_subdev_client_info *ci,
+#endif
 				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_selection *sel)
 {
@@ -1024,6 +1028,9 @@ static int imx708_apply_mode(struct imx708 *imx708,
 }
 
 static int imx708_set_fmt(struct v4l2_subdev *sd,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
+			  const struct v4l2_subdev_client_info *ci,
+#endif
 			  struct v4l2_subdev_state *state,
 			  struct v4l2_subdev_format *fmt)
 {

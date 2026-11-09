@@ -4,7 +4,8 @@
 # sophgo-sg200x-camera extension copies them into the kernel tree instead.
 obj-m := cv1800-vi.o cv1800-csi2.o dw9817-vcm.o gc2083.o imx708.o ov5647.o
 
-cv1800-vi-y := linux/drivers/media/platform/sophgo/cv1800-vi.o
+vi_dir := linux/drivers/media/platform/sophgo
+cv1800-vi-y := $(vi_dir)/cv1800-vi-core.o $(vi_dir)/cv1800-vi-isp.o
 cv1800-csi2-y := linux/drivers/media/platform/sophgo/cv1800-csi2.o
 dw9817-vcm-y := src/dw9817-vcm.o
 

@@ -5,16 +5,22 @@
 #
 #   scripts/build-deb.sh riscv64|arm64 <linux source tree>
 #
-# The Linux tree is only needed for the device tree headers the overlays
-# include. Needs cpp, dtc and dpkg-deb; without dpkg-deb on the host, it is
-# run in a Debian container if docker is available. MAINTAINER overrides the
-# git identity written into the package.
+# The Linux tree is only needed for the dt-bindings headers the overlays
+# include. A kernel headers package has them, for example
+# /usr/src/linux-headers-$(uname -r) on the board. Needs cpp, dtc and
+# dpkg-deb; without dpkg-deb on the host, it is run in a Debian container if
+# docker is available. MAINTAINER overrides the git identity written into the
+# package. Without a git identity, the user and host name are used.
 set -e
 ARCH=${1:?usage: $0 riscv64|arm64 <linux source tree>}
 KSRC=${2:?usage: $0 riscv64|arm64 <linux source tree>}
 TOP=$(cd "$(dirname "$0")/.." && pwd)
 VERSION=$(sed -n 's/^PACKAGE_VERSION="\(.*\)"$/\1/p' "$TOP/dkms.conf")
-MAINTAINER=${MAINTAINER:-"$(git -C "$TOP" config user.name) <$(git -C "$TOP" config user.email)>"}
+if [ -z "$MAINTAINER" ]; then
+	name=$(git -C "$TOP" config user.name 2>/dev/null || id -un)
+	email=$(git -C "$TOP" config user.email 2>/dev/null || echo "$(id -un)@$(uname -n)")
+	MAINTAINER="$name <$email>"
+fi
 case $ARCH in
 	riscv64) DTARCH=riscv ;;
 	arm64) DTARCH=arm64 ;;
@@ -36,13 +42,14 @@ mkdir -p "$SRC/linux"
 cp -r "$TOP/linux/drivers" "$SRC/linux/"
 
 # The overlays of this architecture. Like the kernel's dts tree, they include
-# <riscv/sophgo/...>: the overlay directory is ours, the rest the kernel's.
+# <riscv/sophgo/...>. The overlay directory is ours. cv18xx-reset.h is a copy:
+# kernel headers packages have no arch/*/boot/dts.
 # The postinst copies them into /boot, which dpkg cannot manage on Armbian's
 # FAT partition.
 INC=$OUT/include
 rm -rf "$INC"
 mkdir -p "$INC/riscv/sophgo"
-ln -s "$KSRC/arch/riscv/boot/dts/sophgo/cv18xx-reset.h" "$INC/riscv/sophgo/"
+ln -s "$TOP/scripts/include/cv18xx-reset.h" "$INC/riscv/sophgo/"
 ln -s "$TOP/linux/arch/riscv/boot/dts/sophgo/overlay" "$INC/riscv/sophgo/overlay"
 for dtso in "$TOP/linux/arch/$DTARCH/boot/dts/sophgo/overlay"/*.dtso; do
 	name=$(basename "$dtso" .dtso)

@@ -11,7 +11,7 @@ Camera Module v1 on J2, and a Milk-V CAM-GC2083 on J1 (riscv64 only).
 
 | Module        | What it does |
 |---------------|--------------|
-| `cv1800-vi`   | Raw capture through the VI block's CSI bridge: frames go to memory as packed 12-bit Bayer, with no ISP processing. Media-controller driver with a bridge sub-device (including the bridge's test pattern generator) and a video node. |
+| `cv1800-vi`   | Capture through the VI block: raw frames from its CSI bridge as packed 12-bit Bayer, or NV21/NV12 frames from the SoC's ISP. Media-controller driver with a bridge sub-device (including the bridge's test pattern generator) and two video nodes, `cv1800-vi-raw` and `cv1800-vi-yuv`. One of them streams at a time. |
 | `cv1800-csi2` | MIPI CSI-2 receiver: MAC 0 and the D-PHY, lanes taken from the device tree. |
 | `imx708`      | Sony IMX708 driver from its upstream v2 series, plus the 2x2 binned 2304x1296 mode and power-off between streams (see Limitations). |
 | `gc2083`      | GalaxyCore GC2083 driver (Milk-V CAM-GC2083), by Lukasz Sobala. |
@@ -37,7 +37,8 @@ camera in `/boot/armbianEnv.txt` and reboot:
 - A kernel with `CONFIG_VIDEO_CAMERA_SENSOR=y` (the kernel default), which
   brings the V4L2 sub-device API, and with a CMA pool big enough for the frame
   buffers: about 18 MB for four binned frames, 72 MB for four full-resolution
-  ones. Armbian's sophgo-sg200x kernels reserve 128 MiB.
+  ones. The ISP path adds three raw frames of its own (9.3 MB at 1080p).
+  Armbian's sophgo-sg200x kernels reserve 128 MiB.
 - The headers package of the running kernel, and `dkms`.
 - A short ribbon cable. J2's I2C runs through an auto-direction level shifter
   that rings on long cables: 150 mm works, 500 mm does not.
@@ -45,9 +46,11 @@ camera in `/boot/armbianEnv.txt` and reboot:
 ## Install
 
 Build the package for the board's architecture. The Linux tree only provides
-the device tree headers the overlay includes:
+the dt-bindings headers the overlay includes. A kernel source tree or a kernel
+headers directory works:
 
     scripts/build-deb.sh riscv64 /path/to/linux    # or arm64
+    scripts/build-deb.sh arm64 /usr/src/linux-headers-$(uname -r)    # on the board
 
 On the board, install the kernel headers first, then the package. DKMS builds
 the modules and rebuilds them for every kernel installed later:
@@ -73,6 +76,19 @@ Without the package, `make KDIR=/path/to/kernel/build` builds the modules, and
   Pattern 0 is the live image, 1 the sensor's colour bars. Frames are packed
   RAW12 (the MIPI layout, lines padded to 16 bytes) with the sensor's 10 bits
   in the top bits.
+- **YUV frames from the ISP**: `tools/stream-yuv.sh [width height] [frames]`
+  sets up the same pipeline and captures from `cv1800-vi-yuv` to `cap.yuv`
+  (or `$OUT`), as NV21 (or `FMT=NV12`). `PATTERN=1` sends the bridge's colour
+  bars through the ISP instead of the sensor image. The node has these
+  controls: `red_balance` and `blue_balance` (white balance gains, 1024 =
+  1.0), `black_level` (12-bit units, 0 = off; 252 for the GC2083), `gamma`
+  (1 = sRGB curve, 0 = linear), `colour_correction_matrix` (3x3, rows
+  R G B, 1024 = 1.0, default identity), and `noise_reduction_raw`,
+  `noise_reduction_luma`, `noise_reduction_chroma` (0-255, 0 = off, the
+  default). All take effect at the next frame, also while streaming.
+  Convert a frame on a PC with
+  `ffmpeg -f rawvideo -pix_fmt nv21 -s 1920x1080 -i cap.yuv -frames 1 cap.png`.
+  See "The ISP path" below.
 - **libcamera**: its simple pipeline handler and software ISP turn the camera
   into an ordinary RGB camera for `cam`, GStreamer's `libcamerasrc`, PipeWire
   and V4L2 applications under `libcamerify`. libcamera has to know the
@@ -102,7 +118,9 @@ The sensors themselves deliver:
 - `/sys/kernel/debug/a000000.video-input/status`: what the CSI bridge
   measured in the incoming frames, every status bit seen since the stream
   started, and how often the bridge was reset after a frame of the wrong
-  size.
+  size. For the ISP path also: frames the ISP processed and dropped, stalls,
+  the output range, and the RGB to YUV matrix in use. After a stream the
+  counts of that stream stay readable.
 - `/sys/kernel/debug/a0c2000.csi/status`: receiver state, decoded data type,
   lane LP states and error counts. Writing 1 to `power` powers the receiver
   without a stream, to check that an idle sensor's lanes read LP-11.
@@ -120,7 +138,7 @@ only read while the hardware is powered.
 - Only the Camera Module 3 and v1 on J2 and the CAM-GC2083 on J1 are
   described. Other sensors need their own overlay, and a driver where
   mainline has none.
-- Raw capture only: the SoC's hardware ISP is not used.
+- The ISP path is a first version, see "The ISP path".
 - The first frame after the sensor starts is short. The bridge drops it, but a
   front end armed for it never finishes, so `cv1800-vi` arms only after
   `skip_frames` frames have gone by.
@@ -133,6 +151,45 @@ only read while the hardware is powered.
   `cv1800-vi` resets it, which costs a few frames.
 - OV5647: the colour-bar test pattern comes out in BGGR order, while live
   images are GBRG as the driver reports. Only the test pattern is affected.
+- The bridge's colour bars move from frame to frame at some widths, for
+  example 2752 and 2880, on both nodes. Use a ramp pattern at those widths
+  (`PATTERN=2` for `tools/stream-yuv.sh`).
+
+## The ISP path
+
+The front end writes each raw frame to an internal buffer. The ISP's back end
+reads it back and runs the raw, RGB and YUV stages, which write the frame to
+the capture buffer as 4:2:0 YUV. The vendor stack calls this the offline back
+end mode. The register sequence follows the vendor's GPL kernel driver
+(`osdrv/interdrv/vi` in Milk-V's duo-buildroot-sdk-v2).
+
+What runs: black level, Bayer noise reduction, white balance gains, demosaic,
+the colour matrix, the sRGB gamma curve, the BT.601 RGB to YUV matrix, and
+luma and chroma noise reduction. The noise reduction stages are off until
+an application sets a strength. On the GC2083, luma noise reduction does
+most of the work: 10 suits a gain of about 20x, and above 20 the picture
+goes soft. The Bayer stage blurs the picture at the vendor's defaults.
+What does not run: lens shading, defect pixel correction, temporal noise
+reduction, sharpening,
+tone mapping, and all statistics. Nothing sets the gains automatically yet:
+an application measures the image and sets the controls.
+
+The output is limited-range BT.601, which H.264 encoders and players
+expect. For full range (JPEG), set `V4L2_PIX_FMT_FLAG_SET_CSC` and
+`V4L2_QUANTIZATION_FULL_RANGE` in `VIDIOC_S_FMT`. The status file shows
+the range in use.
+
+Tested on a Milk-V Duo S (SG2000, RISC-V) with the CAM-GC2083 at
+1920x1080: NV12 colours are correct (colour bars), 30 fps, no stalls.
+NV21 is correct too: it equals NV12 with the chroma bytes swapped.
+Frames up to 2880 wide work. Frames 2896 or more wide stall on every
+frame, so the driver limits the width to 2880. Frames up to 4090 tall
+work. Frames 4092 or more tall stall, so the driver limits the height to
+4090. The IMX708 full-resolution mode (4608x2592) is too wide for the
+ISP: use the raw node for it.
+
+Also tested with the IMX708 at 2304x1296, 1920x1080 and 1728x1296:
+colours are correct, and the YUV node keeps the full sensor rate.
 
 ## Layout
 
@@ -145,7 +202,7 @@ only read while the hardware is powered.
                   mainline's ov5647 driver (scripts/update-linux-copies.sh)
     packaging/    Debian package metadata and maintainer scripts
     scripts/      package and copy-refresh scripts
-    tools/        capture helper
+    tools/        capture helpers: raw (stream.sh) and YUV (stream-yuv.sh)
     extras/       the libcamera change
 
 ## License
